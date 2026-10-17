@@ -2,6 +2,16 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.2.0] - 2026-10-17
+
+### Changed
+- **Clan feed level-ups are one running post**, edited in place as new level-ups come in, instead of a new post each time. A new post starts when another message has gone out in the channel since (so the one being edited is always the newest), when the UTC day changes, or when the post is full. Each post holds up to 7 rows in one column; extra rows continue in the next post.
+- The same player levelling the same skill again updates their row (e.g. *Woodcutting 98 → 100*) instead of adding another.
+- The level-up card's subtitle says who it covers: "linked [TAG] members" with a clan token linked, "linked players" without.
+
+### Added
+- The bot logs how many API requests each token made every 15 minutes (tokens shown as short fingerprints), to check usage against the hourly limits.
+
 ## [1.1.0] - 2026-10-17
 
 ### Added

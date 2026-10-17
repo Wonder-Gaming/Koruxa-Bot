@@ -20,7 +20,7 @@ import hashlib
 import logging
 import random
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -39,6 +39,7 @@ BURST = 10  # requests a token may make back to back before pacing kicks in
 MAX_ATTEMPTS = 4
 DEFAULT_CACHE_SECONDS = 30
 MAX_CACHE_SECONDS = 600
+USAGE_LOG_SECONDS = 900  # how often to log requests made per token
 
 
 class KoruxaError(Exception):
@@ -128,6 +129,8 @@ class KoruxaAPI:
         self._buckets: dict[str, _Bucket] = {}
         self._cache: dict[tuple, _CacheEntry] = {}
         self._locks: defaultdict[tuple, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._usage: defaultdict[str, Counter] = defaultdict(Counter)  # token fingerprint -> requests per path
+        self._usage_since = time.monotonic()
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -192,6 +195,7 @@ class KoruxaAPI:
 
         for attempt in range(MAX_ATTEMPTS):
             await bucket.acquire(max_wait)
+            self._count(fp, path)
             try:
                 status, retry_after, data = await self._send(path, params, headers)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
@@ -222,6 +226,19 @@ class KoruxaAPI:
         if last_error == "429":
             raise RateLimited(max(bucket.blocked_until - time.monotonic(), 1.0))
         raise KoruxaError(f"giving up on /{path}: {last_error}")
+
+    def _count(self, fp: str, path: str) -> None:
+        """Count requests actually sent (cache hits aren't), and log the totals every USAGE_LOG_SECONDS."""
+        self._usage[fp][path] += 1
+        elapsed = time.monotonic() - self._usage_since
+        if elapsed < USAGE_LOG_SECONDS:
+            return
+        for token, paths in sorted(self._usage.items(), key=lambda t: -sum(t[1].values())):
+            total = sum(paths.values())
+            log.info("API usage, token %s: %d requests in %.0f min (%.0f/hour): %s", token, total, elapsed / 60,
+                     total * 3600 / elapsed, ", ".join(f"/{p} {n}" for p, n in paths.most_common()))
+        self._usage.clear()
+        self._usage_since = time.monotonic()
 
     @staticmethod
     def _check_body(data: Any, bucket: _Bucket) -> dict[str, Any]:

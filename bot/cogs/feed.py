@@ -1,8 +1,11 @@
 """Clan feed and XP gains.
 
 - Level-ups: every minute, linked players' saved levels are compared with the
-  levels already announced; new ones are posted to the feed channel in one
-  message. A player's first snapshot only sets the baseline, so linking
+  levels already announced. New ones are added to the running level-up post,
+  edited in place, while it is still the newest message in the feed channel,
+  from the same UTC day, and has room (MAX_FEED_ROWS, 7). Otherwise (another
+  announcement went out, someone posted, or a new day) a new post starts, and
+  rows that don't fit continue in further posts. A player's first snapshot only sets the baseline, so linking
   doesn't flood the feed.
 - Weekly top gainers: posted to the feed channel on Mondays (UTC).
 - /gains and /topgains: XP gained over a day, week or month, from the daily
@@ -15,6 +18,8 @@ it costs no extra API calls.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import io
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -27,7 +32,7 @@ from ..alerts import post_alert
 from ..db import Snapshot
 from ..fmt import compact, num
 from ..progress import Gains, gains
-from ..render import Gainer, LevelUp, render_level_ups, render_top_gainers
+from ..render import MAX_FEED_ROWS, Gainer, LevelUp, render_level_ups, render_top_gainers
 from ..skills import skill_emoji, skill_label, skill_name
 
 if TYPE_CHECKING:
@@ -69,6 +74,24 @@ def gainer_rows(ranked: list[tuple[Snapshot, Gains]]) -> list[Gainer]:
         key, (xp, _) = max(g.skills.items(), key=lambda kv: kv[1][0])
         rows.append(Gainer(snap.username, f"+{compact(g.total_xp)}", g.levels, skill_emoji(key), skill_name(key), f"+{compact(xp)}"))
     return rows
+
+
+def merge_level_ups(current: list[LevelUp], new: list[LevelUp]) -> list[LevelUp]:
+    """Add `new` to the rows already shown. The same player and skill again becomes one row (98 -> 100,
+    keeping the first "from" level), and each player's rows stay together for the shaded bands."""
+    rows = list(current)
+    for item in new:
+        same = next((i for i, r in enumerate(rows) if r.player == item.player and r.skill == item.skill), None)
+        if same is None:
+            rows.append(item)
+        else:
+            old = rows[same].old
+            rows[same] = dataclasses.replace(item, old=old,
+                                             milestone=any(old < m <= item.new for m in MILESTONES))
+    order = {}
+    for r in rows:
+        order.setdefault(r.player, len(order))
+    return sorted(rows, key=lambda r: order[r.player])  # stable: keeps each player's rows in order
 
 
 class Feed(commands.Cog):
@@ -126,7 +149,6 @@ class Feed(commands.Cog):
 
         names = {s.character_id: s.username for s in snapshots}
         log.info("Level-ups: %s", {uid: [(k, n) for k, _, n in ch] for uid, ch in level_ups.items()})
-        footer = f"{datetime.now(timezone.utc):%d %b %Y %H:%M} UTC"
         for cfg in await self.bot.db.feature_targets(FEATURE):
             guild = self.bot.get_guild(cfg.guild_id)
             if guild is None:
@@ -139,8 +161,51 @@ class Feed(commands.Cog):
                 for key, old, new in changed
             ]
             if items:
-                png = await asyncio.to_thread(render_level_ups, items, footer)
-                await post_alert(self.bot, FEATURE, image=png, filename="level-ups.png", ping=False, guild_id=cfg.guild_id)
+                await self.post_level_ups(cfg, items)
+
+    async def post_level_ups(self, cfg, items: list[LevelUp]) -> None:
+        """Add level-ups to this server's running post, or start a new one (see the module docstring). Rows
+        past MAX_FEED_ROWS continue in new posts, so every card stays one column."""
+        channel = self.bot.get_channel(cfg.channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        now = datetime.now(timezone.utc)
+        state = await self.bot.db.get_state("feed_levelups") or {}
+        post = state.get(str(cfg.guild_id)) or {}
+        open_post = bool(post.get("message_id") and post.get("channel_id") == channel.id
+                         and channel.last_message_id == post["message_id"]
+                         and post.get("day") == now.date().isoformat())
+        rows = merge_level_ups([LevelUp(**i) for i in post.get("items") or []] if open_post else [], items)
+        chunks = [rows[i:i + MAX_FEED_ROWS] for i in range(0, len(rows), MAX_FEED_ROWS)]
+        footer = f"{now:%d %b %Y} · last update {now:%H:%M} UTC"
+        tag = self.bot.clan_tag
+        subtitle = f"New levels from linked [{tag}] members" if tag else "New levels from linked players"
+
+        for n, chunk in enumerate(chunks):
+            png = await asyncio.to_thread(render_level_ups, chunk, footer, subtitle)
+            message = None
+            if n == 0 and open_post:
+                try:
+                    message = await channel.get_partial_message(post["message_id"]).edit(
+                        attachments=[discord.File(io.BytesIO(png), filename="level-ups.png")])
+                    log.info("Level-ups edited in guild %s (%d rows)", cfg.guild_id, len(chunk))
+                except discord.NotFound:
+                    message = None  # deleted: post it again below
+                except discord.HTTPException as e:
+                    log.warning("Couldn't edit the level-up post in guild %s: %s", cfg.guild_id, e)
+                    return
+            if message is None:
+                sent = await post_alert(self.bot, FEATURE, image=png, filename="level-ups.png", ping=False,
+                                        guild_id=cfg.guild_id)
+                message = sent.get(cfg.guild_id)
+                if message is None:
+                    return
+                log.info("Level-ups posted in guild %s (%d rows)", cfg.guild_id, len(chunk))
+            state[str(cfg.guild_id)] = {
+                "message_id": message.id, "channel_id": channel.id, "day": now.date().isoformat(),
+                "items": [dataclasses.asdict(i) for i in chunk],
+            }
+            await self.bot.db.set_state("feed_levelups", state)
 
     # ---------- weekly recap ----------
 

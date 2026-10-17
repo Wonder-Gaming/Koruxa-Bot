@@ -186,8 +186,7 @@ def render_board(board: Board) -> bytes:
 GREEN = (34, 197, 94)
 GOLD = (251, 191, 36)
 FEED_ROW = 76
-FEED_ROWS = (BODY - COLH) // FEED_ROW  # per column (7)
-MAX_FEED_ROWS = 2 * FEED_ROWS
+MAX_FEED_ROWS = (BODY - COLH) // FEED_ROW  # rows that fit on one card (7); more go in another post
 
 
 @dataclass
@@ -200,50 +199,43 @@ class LevelUp:
     milestone: bool
 
 
-def render_level_ups(items: list[LevelUp], footer: str) -> bytes:
-    """One row per skill levelled; rows for the same player share a shaded band. More than fit in one
-    column go into a second; past that, "…and N more" in the footer."""
+def render_level_ups(items: list[LevelUp], footer: str, subtitle: str = "New levels from linked players") -> bytes:
+    """One row per skill levelled; rows for the same player share a shaded band. Callers keep it to
+    MAX_FEED_ROWS rows (the clan feed starts another post for the rest)."""
     shown, hidden = items[:MAX_FEED_ROWS], len(items) - MAX_FEED_ROWS
-    columns = 1 if len(shown) <= FEED_ROWS else 2
     img, d = _card(GREEN)
-    _header(img, d, "📈", "Level up!", "New levels from linked clan members", GREEN)
+    _header(img, d, "📈", "Level up!", subtitle, GREEN)
     x0 = PAD + 20
-    panel_w = (W - x0 - PAD - BOARD_GAP * (columns - 1)) // columns
-    skill_dx, level_dx = (440, 860) if columns == 1 else (230, 480)
-    for c in range(columns):
-        px = x0 + c * (panel_w + BOARD_GAP)
-        player_x, skill_x, level_x = px + 8, px + skill_dx, px + level_dx
-        y = PAD + HEAD
-        _headings(d, y, [(player_x, "Player"), (skill_x, "Skill"), (level_x, "Level")])
-        y += COLH
-        band, previous = -1, None
-        for item in shown[c * FEED_ROWS:(c + 1) * FEED_ROWS]:
-            if item.player != previous:
-                band += 1
-            if band % 2 == 0:
-                d.rectangle((px - 6, y, px + panel_w - 6, y + FEED_ROW), fill=ROW_SHADE)
-            mid = y + FEED_ROW // 2
-            if item.player != previous:
-                shown_name, font = _shrink(d, item.player, 30, "SemiBold", skill_x - player_x - 20, 22)
-                d.text((player_x, mid), shown_name, font=font, fill=TEXT, anchor="lm")
-            _paste_emoji(img, item.skill_emoji, 40, (skill_x, mid - 20))
-            d.text((skill_x + 52, mid), _fit(d, item.skill, _font(28, "Medium"), level_x - skill_x - 64),
-                   font=_font(28, "Medium"), fill=NAME, anchor="lm")
-            runs = [(f"{item.old}", _font(26, "Medium"), FAINT), ("  →  ", _font(26), MUTED),
-                    (f"{item.new}", _font(32, "Bold"), GOLD if item.milestone else GREEN)]
-            if item.new - item.old > 1:
-                runs.append((f"  +{item.new - item.old}", _font(22, "SemiBold"), MUTED))
-            end = _runs(d, (level_x, mid), runs)
-            if item.milestone and columns == 1:
-                pill_w = 200
-                pill_x = max(end + 16, px + panel_w - 18 - pill_w)  # right-aligned in the row
-                d.rounded_rectangle((pill_x, mid - 21, pill_x + pill_w, mid + 21), 21, fill=(66, 52, 18))
-                _paste_emoji(img, "🎉", 28, (pill_x + 12, mid - 14))
-                d.text((pill_x + 48, mid), "MILESTONE", font=_font(20, "Bold"), fill=GOLD, anchor="lm")
-            elif item.milestone:
-                _paste_emoji(img, "🎉", 30, (end + 14, mid - 15))
-            previous = item.player
-            y += FEED_ROW
+    player_x, skill_x, level_x = x0 + 8, x0 + 440, x0 + 860
+    y = PAD + HEAD
+    _headings(d, y, [(player_x, "Player"), (skill_x, "Skill"), (level_x, "Level")])
+    y += COLH
+
+    band, previous = -1, None
+    for item in shown:
+        if item.player != previous:
+            band += 1
+        if band % 2 == 0:
+            d.rectangle((x0 - 6, y, W - PAD - 6, y + FEED_ROW), fill=ROW_SHADE)
+        mid = y + FEED_ROW // 2
+        if item.player != previous:
+            name, font = _shrink(d, item.player, 30, "SemiBold", skill_x - player_x - 24, 22)
+            d.text((player_x, mid), name, font=font, fill=TEXT, anchor="lm")
+        _paste_emoji(img, item.skill_emoji, 42, (skill_x, mid - 21))
+        d.text((skill_x + 56, mid), item.skill, font=_font(30, "Medium"), fill=NAME, anchor="lm")
+        runs = [(f"{item.old}", _font(28, "Medium"), FAINT), ("  →  ", _font(28), MUTED),
+                (f"{item.new}", _font(34, "Bold"), GOLD if item.milestone else GREEN)]
+        if item.new - item.old > 1:
+            runs.append((f"  +{item.new - item.old}", _font(24, "SemiBold"), MUTED))
+        end = _runs(d, (level_x, mid), runs)
+        if item.milestone:
+            pill_w = 200
+            pill_x = max(end + 16, W - PAD - 18 - pill_w)  # right-aligned in the row
+            d.rounded_rectangle((pill_x, mid - 21, pill_x + pill_w, mid + 21), 21, fill=(66, 52, 18))
+            _paste_emoji(img, "🎉", 28, (pill_x + 12, mid - 14))
+            d.text((pill_x + 48, mid), "MILESTONE", font=_font(20, "Bold"), fill=GOLD, anchor="lm")
+        previous = item.player
+        y += FEED_ROW
     _footer(d, footer + (f" · …and {hidden} more" if hidden > 0 else ""))
     return _png(img)
 
