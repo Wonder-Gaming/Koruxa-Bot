@@ -18,7 +18,7 @@ about 85 of those an hour, leaving the rest for commands:
 - at the weekly reset: a clan recap card for the week just ended (Clan Feed)
 
 So far these were only seen from a new test clan, so withdrawal requests, the
-enchant queue, active research and a defeated boss are read defensively (like
+enchant queue and active research are read defensively (like
 the world boss) and logged raw the first time they appear, to refine later.
 Bank log entries look like {"id", "at", "action": "deposit"|"withdraw",
 "character", "character_id", "item_key", "name", "quantity", "unit_value",
@@ -323,6 +323,8 @@ def boss_embed(boss: dict[str, Any], data: dict[str, Any]) -> discord.Embed:
     Shape: {"tier", "max_tier_unlocked", "status": "alive", "started_at",
     "hp": {"current", "max", "pct"}, "parts": {"head": {"hp", "max_hp", "shield", "shield_max"}, ...},
     "window": {"attempts_per_member", "hours", "next_reset_at", "number", "seconds_until_reset", "started_at"}}
+    Once killed: "status": "respawning", "defeated_at", "next_spawn_at" (12 hours later),
+    "seconds_until_spawn", and no "window".
     """
     tier, alive = boss.get("tier"), boss_alive(boss)
     hp = boss.get("hp") if isinstance(boss.get("hp"), dict) else {}
@@ -376,7 +378,13 @@ def boss_image(boss: dict[str, Any], data: dict[str, Any]) -> bytes:
             f"Attempts reset at {reset:%H:%M} UTC"
             + (f" · {per} per member every {window.get('hours', '?')}h" if per else "")
         )
-    if started := when(boss.get("started_at")):
+    if not boss_alive(boss):
+        down = [f"Defeated {d:%d %b %H:%M} UTC"] if (d := when(boss.get("defeated_at"))) else []
+        if spawn := next_spawn(boss):
+            down.append(f"next boss {spawn:%d %b %H:%M} UTC")
+        if down:
+            footer.append(" · ".join(down))
+    elif started := when(boss.get("started_at")):
         footer.append(f"Up since {started:%d %b %H:%M} UTC")
     card = BossCard(
         subtitle=clan_name(data),
@@ -401,8 +409,7 @@ RESPAWN_KEYS = ("respawn_at", "next_spawn_at", "spawns_at", "next_boss_at", "coo
 
 
 def presence_text(boss: Any) -> str | None:
-    """The bot's member-list status: tier and HP while alive, else a countdown to the next boss when
-    the API gives one (no defeated boss seen yet, so the field name is a guess)."""
+    """The bot's member-list status: tier and HP while alive, else a countdown to the next boss."""
     if not isinstance(boss, dict) or not boss:
         return None
     tier = boss.get("tier", "?")
@@ -412,16 +419,28 @@ def presence_text(boss: Any) -> str | None:
         pct = f" · {current / maximum:.0%} HP" if maximum else ""
         return f"⚔️ Clan boss T{tier}{pct}"
     text = f"💀 Clan boss T{tier} down"
-    nxt = _first(boss, RESPAWN_KEYS)
-    if isinstance(nxt, dict):
-        nxt = _first(nxt, RESPAWN_KEYS + ("at", "time"))
-    if (at := when(nxt)) and (left := (at - datetime.now(timezone.utc)).total_seconds()) > 0:
+    if (at := next_spawn(boss)) and (left := (at - datetime.now(timezone.utc)).total_seconds()) > 0:
         text += f" · next in {duration(left)}"
     return text
 
 
+def next_spawn(boss: dict[str, Any]) -> datetime | None:
+    """When the next boss spawns (a dead boss has "next_spawn_at", 12 hours after "defeated_at")."""
+    nxt = _first(boss, RESPAWN_KEYS)
+    if isinstance(nxt, dict):
+        nxt = _first(nxt, RESPAWN_KEYS + ("at", "time"))
+    return when(nxt)
+
+
 def boss_text(boss: dict[str, Any]) -> str | None:
-    """Message text above the card: Discord counts this down live, which an image can't."""
+    """Message text above the card: Discord counts this down live (in each viewer's timezone), which an
+    image can't."""
+    if not boss_alive(boss):
+        text = f"💀 **Clan boss tier {boss.get('tier', '?')} down**"
+        if spawn := next_spawn(boss):
+            text += (f" · next boss {discord.utils.format_dt(spawn, 'R')}"
+                     f" ({discord.utils.format_dt(spawn, 't')})")
+        return text
     window = boss.get("window") if isinstance(boss.get("window"), dict) else {}
     if reset := when(window.get("next_reset_at")):
         return f"🔄 Attempts reset {discord.utils.format_dt(reset, 'R')}"
