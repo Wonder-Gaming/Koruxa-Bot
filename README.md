@@ -305,6 +305,12 @@ Everything the bot remembers is in `data/bot.db`. To back up, copy `data/` **and
 
 ---
 
+## License
+
+The bot's code is public domain under [The Unlicense](LICENSE): use, copy, change, sell or share it however you like, no credit needed.
+
+The bundled font and emoji images in `assets/` keep their own licences (see below); Twemoji's CC-BY 4.0 asks that you credit Twitter if you redistribute them.
+
 ## Credits
 
 - Game data from the Koruxa Player API. This is a fan-made bot, not affiliated with Koruxa.
