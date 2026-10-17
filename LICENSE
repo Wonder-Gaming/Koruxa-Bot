@@ -21,10 +21,4 @@ OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
-The bundled third-party assets in assets/ are NOT covered by this
-dedication and keep their own licences: the Inter font (SIL Open Font
-License 1.1, see assets/fonts/OFL.txt) and the Twemoji images
-(CC-BY 4.0, (c) Twitter, Inc and other contributors). See
-assets/README.md.
-
 For more information, please refer to <https://unlicense.org/>
