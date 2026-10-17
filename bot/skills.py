@@ -14,6 +14,9 @@ SKILL_GROUPS = [
     ("Combat", "⚔️", ["slayer", "attack", "strength", "defence", "hitpoints", "magic", "ranged"]),
 ]
 
+# Skills the API doesn't report on their own: the game uses another skill's level for them.
+SKILL_SOURCE = {"alchemy": "magic"}
+
 SKILL_EMOJI = {
     "woodcutting": "🪓",
     "mining": "⛏️",

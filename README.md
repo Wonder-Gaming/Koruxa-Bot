@@ -2,30 +2,32 @@
 
 A self-hosted Discord bot for [Koruxa](https://koruxa.com) clans. It reads the Koruxa Player API to give your server:
 
-- **Clan highscores**: four live image boards (Overall, Combat, Gathering, Artisan) of your linked clan members, edited in place.
+- **Clan highscores**: live image boards (Overall, Combat, Gathering, Artisan; the long groups take two boards each) of your linked clan members, edited in place.
 - **Clan feed**: skill level-ups, clan level-ups, Institute research, and weekly recaps / top gainers.
-- **Clan boss alerts**: a live boss card with HP and shields, plus a role ping when a new boss spawns or attempts refresh.
+- **Clan boss alerts**: a live boss card with HP and shields, a top-5 damage leaderboard for the current boss, a role ping when a new boss spawns or attempts refresh, and a countdown to the next spawn.
 - **Clan bank**: a live bank summary and the latest deposits, withdrawals and requests.
 - **World boss alerts**: role pings for world boss events.
 - **Personal tools**: profile, XP/h rates with what-if boosts, mastery route planning, XP gains, clan-bank budget.
 
 Each server runs its own copy of the bot with its own Discord bot account. Nothing is shared between installs.
 
+What's new: see the [changelog](CHANGELOG.md).
+
 ## Screenshots
 
 Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), players and numbers are made up; regenerate them with [`scripts/demo_images.py`](scripts/demo_images.py).
 
-| Clan highscores | Skill boards (Combat, Gathering, Artisan) |
+| Clan highscores | Skill boards (Combat and Artisan take two boards each) |
 |---|---|
 | ![Overall highscores](docs/images/highscores-overall.png) | ![Gathering highscores](docs/images/highscores-gathering.png) |
-| **Clan boss** (live HP, shields, attempts) | **Clan bank** |
-| ![Clan boss card](docs/images/clan-boss.png) | ![Clan bank summary](docs/images/clan-bank.png) |
-| **Bank activity** (deposits, withdrawals, requests) | **Level-ups** (clan feed) |
-| ![Recent bank activity](docs/images/bank-activity.png) | ![Level-ups](docs/images/level-ups.png) |
-| **Weekly top gainers** | **Weekly clan recap** |
-| ![Weekly top gainers](docs/images/top-gainers.png) | ![Weekly clan recap](docs/images/clan-week.png) |
-| **Clan level-up** | **Institute research** |
-| ![Clan level up](docs/images/clan-level.png) | ![Research complete](docs/images/research-complete.png) |
+| **Clan boss** (live HP, shields, attempts) | **Boss damage** (top 5 on the current boss) |
+| ![Clan boss card](docs/images/clan-boss.png) | ![Boss damage leaderboard](docs/images/boss-damage.png) |
+| **Clan bank** | **Bank activity** (deposits, withdrawals, requests) |
+| ![Clan bank summary](docs/images/clan-bank.png) | ![Recent bank activity](docs/images/bank-activity.png) |
+| **Level-ups** (clan feed) | **Weekly top gainers** |
+| ![Level-ups](docs/images/level-ups.png) | ![Weekly top gainers](docs/images/top-gainers.png) |
+| **Weekly clan recap** | **Clan level-up** |
+| ![Weekly clan recap](docs/images/clan-week.png) | ![Clan level up](docs/images/clan-level.png) |
 
 ---
 

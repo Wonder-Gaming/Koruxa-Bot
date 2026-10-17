@@ -6,8 +6,9 @@ refresh, against each player's own 240/hour token limit (4/hour at the
 15-minute default). The API client also reuses a cached /me, e.g. from a
 recent /profile.
 
-Each server with a highscores channel gets four images (Overall, Combat,
-Gathering, Artisan, drawn by bot/render.py) showing the top linked server members. They are edited in
+Each server with a highscores channel gets one image per board (Overall, then
+Combat, Gathering and Artisan, the long groups split over two boards so every
+image is the same size; drawn by bot/render.py) showing the top linked members. They are edited in
 place when the rankings change, and reposted in order if one goes missing.
 """
 
@@ -31,8 +32,8 @@ from ..crypto import TokenDecryptError
 from ..db import Snapshot
 from ..fmt import compact, num, timestamp
 from ..progress import gains
-from ..render import Board, Row, render_board
-from ..skills import SKILL_GROUPS, skill_emoji, skill_name
+from ..render import BOARD_ROWS, Board, Row, render_board
+from ..skills import SKILL_GROUPS, SKILL_SOURCE, skill_emoji, skill_name
 
 if TYPE_CHECKING:
     from ..client import KoruxaBot
@@ -40,7 +41,24 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 FEATURE = "highscores"
-BOARDS = ["Overall", "Combat", "Gathering", "Artisan"]  # message order in the channel
+GROUP_ORDER = ["Combat", "Gathering", "Artisan"]
+
+
+def _board_parts(group: str) -> list[list[str]]:
+    """A skill group's skills, split evenly into boards of at most BOARD_ROWS (Artisan's 11 -> 6 + 5)."""
+    keys = next(k for name, _, k in SKILL_GROUPS if name == group)
+    parts = -(-len(keys) // BOARD_ROWS)
+    per = -(-len(keys) // parts)
+    return [keys[i:i + per] for i in range(0, len(keys), per)]
+
+
+# Message order in the channel; a group too long for one board becomes "Combat 1", "Combat 2", ...
+BOARDS = ["Overall"] + [
+    group if len(parts) == 1 else f"{group} {i}"
+    for group in GROUP_ORDER
+    for parts in [_board_parts(group)]
+    for i in range(1, len(parts) + 1)
+]
 TOP_N = 3
 # Accent colours, matching the section headers in the game's sidebar.
 BOARD_COLOURS = {
@@ -87,7 +105,7 @@ def build_board(
     week_gains: dict[int, int] | None = None,
     clan: str = "",
 ) -> Board:
-    """clan: who the boards count, e.g. "[NPC]" ("" = every linked character)."""
+    """clan: who the boards count, e.g. "[MOSS]" ("" = every linked character)."""
     week_gains = week_gains or {}
     rows: list[Row] = []
     if board == "Overall":
@@ -102,13 +120,17 @@ def build_board(
             entries = [(p, v, shown(v)) for p in players if isinstance(v := value(p), int) and v > 0]
             rows.append(Row(icon, label, _top(entries)))
     else:
-        label, emoji, keys = next(g for g in SKILL_GROUPS if g[0] == board)
-        title, first_column = f"{label} highscores", "Skill"
+        group, _, part = board.partition(" ")
+        parts = _board_parts(group)
+        label, emoji, _ = next(g for g in SKILL_GROUPS if g[0] == group)
+        keys = parts[int(part) - 1] if part else parts[0]
+        title, first_column = f"{label} highscores" + (f" ({part}/{len(parts)})" if part else ""), "Skill"
         for key in keys:
+            source = SKILL_SOURCE.get(key, key)  # e.g. Alchemy shows the Magic level
             # Sort by level, then XP to break ties.
             entries = [
-                (p, p.skills[key][0] * 10**12 + p.skills[key][1], f"Lv {p.skills[key][0]}")
-                for p in players if key in p.skills
+                (p, p.skills[source][0] * 10**12 + p.skills[source][1], f"Lv {p.skills[source][0]}")
+                for p in players if source in p.skills
             ]
             rows.append(Row(skill_emoji(key), skill_name(key), _top(entries)))
 
@@ -123,7 +145,7 @@ def build_board(
     return Board(
         title=title,
         emoji=emoji,
-        accent=BOARD_COLOURS[board],
+        accent=BOARD_COLOURS[board.partition(" ")[0]],
         subtitle=f"Top {TOP_N} {members}s · /link to join · updates every {refresh_minutes} min",
         first_column=first_column,
         rows=rows,

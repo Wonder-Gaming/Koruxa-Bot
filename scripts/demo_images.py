@@ -17,7 +17,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from bot.cogs.clan import (
-    Clan, activity_image, bank_image, boss_image, clan_level_card, research_done_card, research_started_card,
+    Clan, activity_image, bank_image, boss_image, clan_level_card, damage_image, research_done_card,
+    research_started_card,
 )
 from bot.cogs.highscores import build_board
 from bot.db import Snapshot
@@ -96,6 +97,18 @@ def boss(out: str) -> None:
                    "next_reset_at": iso(started + timedelta(hours=4))},
     }
     save(out, "clan-boss.png", boss_image(live, {"clan": CLAN}))
+
+    # Damage on this boss: weekly totals now, minus the snapshot taken at the spawn.
+    hits = {"Grindset": 118e9, "Mayhem": 74e9, "Riftbreaker": 61e9, "Mossy": 39e9, "TotoroHero": 27e9,
+            "Pudge": 22e9, "Fernwick": 15e9, "Lil Nugget": 12e9}
+    ids = {name: str(i) for i, name in enumerate(hits)}
+    baseline = {ids[n]: 900e9 - i * 80e9 for i, n in enumerate(hits)}
+    dmg = {
+        "boss": "demo", "baseline_at": iso(started + timedelta(seconds=40)), "updated_at": iso(NOW),
+        "names": {cid: n for n, cid in ids.items()}, "baseline": baseline, "carried": {},
+        "latest": {ids[n]: baseline[ids[n]] + v for n, v in hits.items()},
+    }
+    save(out, "boss-damage.png", damage_image(dmg, live, {"clan": CLAN}))
 
 
 def bank(out: str) -> None:

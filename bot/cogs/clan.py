@@ -12,7 +12,11 @@ about 85 of those an hour, leaving the rest for commands:
 - boss every minute (the cache makes faster pointless): one card edited when HP
   or the tier changes, with a Clan Boss role ping under it while the boss is
   alive, deleted once it's dead (Clan Boss channel). The bot's member-list
-  status shows the boss tier and HP, or a countdown to the next one
+  status shows the boss tier and HP, or a countdown to the next one.
+  Under the card, a second one ranks who has hit this boss hardest. The API
+  has no per-boss damage, so it's each member's weekly boss_damage (clan-xp
+  detail=members) minus a snapshot taken when the boss spawned, updated every
+  5 minutes with the XP poll's request (see track_damage)
 - XP every 5 min: clan level-ups (Clan Feed channel)
 - Institute every 10 min: research started and completed (Clan Feed channel)
 - at the weekly reset: a clan recap card for the week just ended (Clan Feed)
@@ -47,8 +51,8 @@ from ..api import KoruxaError, RateLimited, TokenRevoked, fingerprint
 from ..crypto import TokenDecryptError
 from ..fmt import bar, compact, num, timestamp, title
 from ..render import (
-    Activity, Announcement, BankItem, BossCard, BossPart, Contributor, render_announcement, render_bank, render_bank_activity, render_boss,
-    render_clan_week,
+    Activity, Announcement, BankItem, BossCard, BossPart, Contributor, DamageRow, MAX_ACTIVITY_ROWS, MAX_DAMAGE_ROWS, render_announcement, render_bank,
+    render_bank_activity, render_boss, render_boss_damage, render_clan_week,
 )
 from .worldboss import NAME_KEYS, _display, _embed_fingerprint, _first, _flatten, _name, event_key
 
@@ -212,8 +216,9 @@ def activity_image(data: dict[str, Any]) -> bytes:
     if data.get("log_order", "newest_first") != "newest_first":
         entries.reverse()
     requests = [r for r in data.get("requests") or [] if isinstance(r, dict)]
-    rows = [to_activity(r, "request") for r in requests] + [to_activity(e) for e in entries]
-    footer = f"Last {int(BANK_LOG_LIMIT)} changes, newest first"
+    rows = ([to_activity(r, "request") for r in requests] + [to_activity(e) for e in entries])[:MAX_ACTIVITY_ROWS]
+    changes = sum(1 for r in rows if r.kind != "request")
+    footer = f"Last {changes} change{'s' if changes != 1 else ''}, newest first"
     if requests:
         footer = f"{len(requests)} pending request{'s' if len(requests) != 1 else ''} at the top · " + footer
     return render_bank_activity("Recent bank activity", clan_name(data), rows, footer)
@@ -638,6 +643,59 @@ class ClanTokenModal(discord.ui.Modal, title="Set the clan API token"):
             await interaction.response.send_message(message, ephemeral=True)
 
 
+# ---------- per-boss damage ----------
+
+MEMBER_PARAMS = {"weeks": "1", "detail": "members"}  # shared by the XP poll and the damage tracker
+DAMAGE_AFTER_KILL = timedelta(minutes=10)  # keep updating this long after the kill, then freeze
+
+
+def member_damage(data: dict[str, Any]) -> tuple[str | None, dict[str, int], dict[str, str]]:
+    """(current week, {character_id: boss damage this week}, {character_id: name}) from clan-xp detail=members."""
+    week = data.get("week_start_current")
+    damage, names = {}, {}
+    for m in data.get("weekly_members") or []:
+        if not isinstance(m, dict) or m.get("week_start") != week or m.get("character_id") is None:
+            continue
+        cid = str(m["character_id"])
+        damage[cid] = int(m.get("boss_damage") or 0)
+        names[cid] = str(m.get("character") or "?")
+    return week, damage, names
+
+
+def damage_rows(dmg: dict[str, Any]) -> list[DamageRow]:
+    """Damage on this boss per member: earlier weeks' share (if the boss spanned a weekly reset) plus
+    this week's total minus the snapshot."""
+    baseline, latest, carried = dmg.get("baseline") or {}, dmg.get("latest") or {}, dmg.get("carried") or {}
+    done = {cid: carried.get(cid, 0) + max(latest.get(cid, 0) - baseline.get(cid, 0), 0)
+            for cid in set(latest) | set(carried)}
+    total = sum(done.values())
+    names = dmg.get("names") or {}
+    rows = [DamageRow(names.get(cid, "?"), v, v / total) for cid, v in done.items() if v > 0]
+    return sorted(rows, key=lambda r: -r.damage)
+
+
+def damage_image(dmg: dict[str, Any] | None, boss: dict[str, Any], data: dict[str, Any]) -> bytes:
+    alive = boss_alive(boss)
+    subtitle = f"Tier {boss.get('tier', '?')} · {clan_name(data)}"
+    if not dmg or not dmg.get("baseline_at"):
+        return render_boss_damage("Boss damage", subtitle, [],
+                                  "Not tracked: the bot wasn't watching when this boss was fought", alive)
+    rows = damage_rows(dmg)
+    footer = []
+    since, started = when(dmg.get("baseline_at")), when(boss.get("started_at"))
+    if since and started and since - started > timedelta(minutes=3):
+        footer.append(f"Counting since {since:%H:%M} UTC")
+    if rows:
+        count = f"Top {MAX_DAMAGE_ROWS} of {len(rows)} members" if len(rows) > MAX_DAMAGE_ROWS else \
+            f"{len(rows)} member{'s' if len(rows) != 1 else ''}"
+        footer.append(f"{count} · {compact(sum(r.damage for r in rows))} total")
+    if dmg.get("frozen"):
+        footer.append("Final")
+    elif updated := when(dmg.get("updated_at")):
+        footer.append(f"Updated {updated:%H:%M} UTC · every 5 min")
+    return render_boss_damage("Boss damage", subtitle, rows, " · ".join(footer), alive)
+
+
 # ---------- the cog ----------
 
 class Clan(commands.Cog):
@@ -646,6 +704,7 @@ class Clan(commands.Cog):
         self.token = ""
         self.clan: dict[str, Any] = {}  # id, name and tag of the token's clan, once seen
         self._ticks = 0
+        self._tick_n = 0
         self._token_ok = True
         self._last_bank: str | None = None
         self._last_boss: str | None = None
@@ -728,6 +787,7 @@ class Clan(commands.Cog):
         if not self.clan:
             await self.fetch("clan-xp")  # learn which clan the token belongs to
         n, self._ticks = self._ticks, self._ticks + 1
+        self._tick_n = n
         jobs = [
             (True, self.poll_boss),
             (n % 10 == 0, self.poll_bank),
@@ -848,13 +908,18 @@ class Clan(commands.Cog):
         if (key, alive) != (state.get("key"), state.get("alive")):
             log.info("Clan boss %s: alive=%s raw=%s", key, alive, json.dumps(boss)[:4000])
 
-        # The embed text covers everything on the card, so it doubles as the change check.
-        fingerprint = _embed_fingerprint(boss_embed(boss, data))
+        dmg = await self.track_damage(boss, key, alive, clan_id(data))
+
+        # The embed text covers everything on the boss card, so it doubles as the change check.
+        fingerprint = _embed_fingerprint(boss_embed(boss, data)) + json.dumps(
+            [(r.player, r.damage) for r in damage_rows(dmg or {})] + [bool((dmg or {}).get("frozen"))])
         if fingerprint != self._last_boss:
             png = await asyncio.to_thread(boss_image, boss, data)
+            damage_png = await asyncio.to_thread(damage_image, dmg, boss, data)
             for cfg in await self.bot.db.feature_targets("clanboss"):
                 card_before = (await self.bot.db.get_state("clanboss_messages") or {}).get(str(cfg.guild_id))
-                await self.show_cards("clanboss", cfg, [(png, "clan-boss.png", boss_text(boss))])
+                await self.show_cards("clanboss", cfg, [(png, "clan-boss.png", boss_text(boss)),
+                                                        (damage_png, "boss-damage.png", None)])
                 card_after = (await self.bot.db.get_state("clanboss_messages") or {}).get(str(cfg.guild_id))
                 if card_after != card_before:
                     await self.delete_pings(state, cfg.guild_id)  # the card was reposted: the ping goes below it
@@ -902,6 +967,59 @@ class Clan(commands.Cog):
             return
         self._presence = (text, time.monotonic())
 
+    async def track_damage(self, boss: dict[str, Any], key: str, alive: bool, clan: Any) -> dict[str, Any] | None:
+        """Per-member damage on this boss, from weekly totals minus a snapshot taken when the bot first saw
+        it alive. Fetches clan-xp only at the spawn, every 5 minutes (with the XP poll's request), on the
+        kill, and for DAMAGE_AFTER_KILL after it; then the result is frozen."""
+        dmg = await self.bot.db.get_state("clan_boss_damage") or {}
+        if dmg.get("boss") != key or dmg.get("clan_id") != clan:
+            dmg = {"boss": key, "clan_id": clan}
+            if not alive:
+                await self.bot.db.set_state("clan_boss_damage", dmg)  # first seen dead: nothing to measure
+                return dmg
+        if dmg.get("frozen") or (not dmg.get("baseline_at") and not alive):
+            return dmg
+
+        defeated = when(boss.get("defeated_at"))
+        just_died = not alive and dmg.get("alive", True)
+        due = (not dmg.get("baseline_at") or just_died or self._tick_n % 5 == 0)
+        if not due:
+            return dmg
+        data = await self.fetch("clan-xp", MEMBER_PARAMS)
+        if data is None:
+            return dmg
+        week, damage, names = member_damage(data)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        if not dmg.get("baseline_at"):
+            dmg.update({"week": week, "baseline": damage, "latest": damage, "carried": {}, "names": names,
+                        "baseline_at": now})
+            log.info("Boss damage %s: snapshot of %d members (total %s)", key, len(damage), sum(damage.values()))
+        else:
+            if week != dmg.get("week"):
+                # A weekly reset mid-fight: bank what was done before it; the new week starts from 0.
+                carried = dmg.get("carried") or {}
+                for cid, value in (dmg.get("latest") or {}).items():
+                    done = value - (dmg.get("baseline") or {}).get(cid, 0)
+                    if done > 0:
+                        carried[cid] = carried.get(cid, 0) + done
+                dmg.update({"week": week, "baseline": {}, "carried": carried})
+                log.info("Boss damage %s: weekly reset during the fight", key)
+            before = sum(r.damage for r in damage_rows(dmg))
+            dmg["latest"] = damage
+            dmg["names"] = {**(dmg.get("names") or {}), **names}
+            after = sum(r.damage for r in damage_rows(dmg))
+            if after != before:
+                log.info("Boss damage %s: %s total (+%s since last check)", key, after, after - before)
+        dmg["updated_at"] = now
+        dmg["alive"] = alive
+        if not alive and defeated and datetime.now(timezone.utc) - defeated >= DAMAGE_AFTER_KILL:
+            dmg["frozen"] = True
+            log.info("Boss damage %s: final, %s", key,
+                     ", ".join(f"{r.player} {compact(r.damage)}" for r in damage_rows(dmg)[:5]))
+        await self.bot.db.set_state("clan_boss_damage", dmg)
+        return dmg
+
     async def delete_pings(self, state: dict[str, Any], guild_id: int | None = None) -> None:
         """Remove the role ping under the boss card (in one server, or all)."""
         pings = state.setdefault("pings", {})
@@ -922,7 +1040,7 @@ class Clan(commands.Cog):
     async def poll_xp(self) -> None:
         if not await self.has_targets("feed"):
             return
-        data = await self.fetch("clan-xp")
+        data = await self.fetch("clan-xp", MEMBER_PARAMS)  # same request as the damage tracker, so it's cached
         if data is None:
             return
         level = (data.get("xp") or {}).get("level")

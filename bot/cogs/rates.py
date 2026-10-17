@@ -31,7 +31,7 @@ from discord.ext import commands
 from ..fmt import compact, timestamp
 from .account import CHARACTER_HELP, character_autocomplete
 from ..mastery import MASTERY_GATES, duration_text, plan
-from ..skills import skill_label, skill_name
+from ..skills import SKILL_SOURCE, skill_label, skill_name
 
 if TYPE_CHECKING:
     from ..client import KoruxaBot
@@ -271,7 +271,7 @@ def rates_embed(
         a, _, xp_h, _ = locked[0]
         embed.add_field(name="Next unlock", value=f"{a.get('label')} at level {a.get('level_req')}: {compact(xp_h)} XP/h", inline=False)
 
-    notes = ["Your gear and tools as of"]
+    notes = ["Your gear and tools now"]
     if estimate:
         notes.insert(0, "XP with changed boosts is an estimate ·")
     if not boosts.known and not scenario.is_current:
@@ -329,6 +329,19 @@ def mastery_embed(skill: str, current: int, milestones: list, data: dict[str, An
 
 # ---------- the cog ----------
 
+def fix_unlocks(skill: str, data: dict[str, Any], me: dict[str, Any]) -> None:
+    """For a skill the API has no level for (Alchemy uses the Magic level in game), it marks every action
+    locked. Work "unlocked" out from the source skill's level instead (it only checks the level)."""
+    source = SKILL_SOURCE.get(skill)
+    if source is None:
+        return
+    level = next((int(sk.get("level") or 0) for sk in me.get("skills") or []
+                  if isinstance(sk, dict) and str(sk.get("skill_key")).lower() == source), 0)
+    for a in data.get("actions") or []:
+        if isinstance(a, dict) and isinstance(a.get("level_req"), int):
+            a["unlocked"] = a["level_req"] <= level
+
+
 class Rates(commands.Cog):
     def __init__(self, bot: KoruxaBot):
         self.bot = bot
@@ -373,6 +386,7 @@ class Rates(commands.Cog):
         me = await account.fetch_me(interaction, linked)  # boosts; usually served from cache
         if me is None:
             return
+        fix_unlocks(skill.value, data, me)
         scenario = Scenario(wells, buffs, brew, extra_speed, extra_xp)
         embed = rates_embed(
             skill.value, data, sort.value if sort else "xp", read_boosts(me), scenario,
@@ -409,6 +423,7 @@ class Rates(commands.Cog):
         me = await account.fetch_me(interaction, linked)
         if me is None:
             return
+        fix_unlocks(skill.value, data, me)
         mastery_rows = ((me.get("private") or {}).get("mastery") or {}).get("actions")
         if not isinstance(mastery_rows, list):
             await interaction.followup.send(
