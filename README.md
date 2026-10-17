@@ -11,6 +11,22 @@ A self-hosted Discord bot for [Koruxa](https://koruxa.com) clans. It reads the K
 
 Each server runs its own copy of the bot with its own Discord bot account. Nothing is shared between installs.
 
+## Screenshots
+
+Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), players and numbers are made up; regenerate them with [`scripts/demo_images.py`](scripts/demo_images.py).
+
+| Clan highscores | Skill boards (Combat, Gathering, Artisan) |
+|---|---|
+| ![Overall highscores](docs/images/highscores-overall.png) | ![Gathering highscores](docs/images/highscores-gathering.png) |
+| **Clan boss** (live HP, shields, attempts) | **Clan bank** |
+| ![Clan boss card](docs/images/clan-boss.png) | ![Clan bank summary](docs/images/clan-bank.png) |
+| **Bank activity** (deposits, withdrawals, requests) | **Level-ups** (clan feed) |
+| ![Recent bank activity](docs/images/bank-activity.png) | ![Level-ups](docs/images/level-ups.png) |
+| **Weekly top gainers** | **Weekly clan recap** |
+| ![Weekly top gainers](docs/images/top-gainers.png) | ![Weekly clan recap](docs/images/clan-week.png) |
+| **Clan level-up** | **Institute research** |
+| ![Clan level up](docs/images/clan-level.png) | ![Research complete](docs/images/research-complete.png) |
+
 ---
 
 ## Contents
