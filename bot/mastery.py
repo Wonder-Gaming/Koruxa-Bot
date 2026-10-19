@@ -1,7 +1,8 @@
 """Mastery planning: the quickest route to a total mastery level in a skill.
 
 Total mastery = the sum of mastery levels of a skill's actions (e.g. Scorchwood
-Tree needs 3,000 Woodcutting mastery). Each action earns its own mastery XP per
+Tree needs 3,000 Woodcutting mastery). Each action's mastery caps at level 500
+(MAX_MASTERY_LEVEL). Each action earns its own mastery XP per
 hour, and every level costs more than the last, so repeatedly training whichever
 action's *next* level is quickest gives the fastest route (greedy is optimal
 because each action's level costs only increase).
@@ -26,6 +27,7 @@ from typing import Any
 # ("unlocked" only checks the skill level). Confirmed in game (Oct 2026):
 # level 120 -> 3,000, 135 -> 3,500, 150 -> 4,000.
 MASTERY_GATES = [(150, 4000), (135, 3500), (120, 3000)]
+MAX_MASTERY_LEVEL = 500  # an action's mastery stops here
 
 
 def mastery_gate(level_req: int) -> int:
@@ -102,7 +104,7 @@ def plan(
         rate = per_cycle * 3_600_000 / (a.get("permanent_duration_ms") or a["duration_ms"])
         # Already-trained actions are clearly unlocked; untrained expert ones wait for their gate.
         gate = 0 if row else mastery_gate(a.get("level_req") or 0)
-        if rate > 0 and rate_now > 0:
+        if rate > 0 and rate_now > 0 and m["level"] < MAX_MASTERY_LEVEL:
             states.append(ActionState(
                 a["action_key"], a.get("label", a["action_key"]), m["level"], m.get("xp", 0), rate, rate_now,
                 m["level"], gate,
@@ -115,7 +117,7 @@ def plan(
         need = target - current_total
         best = None
         for s, (level, xp) in zip(states, start_states):
-            if s.gate > current_total or need <= 0:
+            if s.gate > current_total or need <= 0 or level + need > MAX_MASTERY_LEVEL:
                 continue
             gained = max(threshold(level + need, known) - xp, 0)
             g = Gain(s.label, level, level + need, gained / s.rate_now, gained / s.rate, 0)
@@ -146,7 +148,8 @@ def plan(
             s.xp = threshold(s.level + 1, known)
             s.level += 1
             total += 1
-            heapq.heappush(heap, (cost(s), i))
+            if s.level < MAX_MASTERY_LEVEL:  # maxed actions drop out; the next quickest takes over
+                heapq.heappush(heap, (cost(s), i))
             if waiting:
                 release()
         milestone = Milestone(target, reached=total >= target, single=single(target))

@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.2.1] - 2026-10-20
+
+### Fixed
+- `/mastery` could plan an action past mastery level 500, the game's cap (e.g. "train X to 518"). Actions now stop at 500 and the next quickest action takes over, and the "train just one action" option only suggests an action that can get there without passing 500.
+
 ## [1.2.0] - 2026-10-17
 
 ### Changed
