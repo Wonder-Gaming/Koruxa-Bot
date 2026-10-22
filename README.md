@@ -9,7 +9,7 @@ A self-hosted Discord bot for [Koruxa](https://koruxa.com) clans. It reads the K
 - **World boss alerts**: role pings for world boss events.
 - **Personal tools**: profile, XP/h rates with what-if boosts, mastery route planning, XP gains, clan-bank budget.
 
-Each server runs its own copy of the bot with its own Discord bot account. Nothing is shared between installs.
+Run your own copy with its own Discord bot account. One copy can serve several Discord servers, each with its own clan (see [Hosting several servers](#hosting-several-servers)).
 
 What's new: see the [changelog](CHANGELOG.md).
 
@@ -40,9 +40,10 @@ Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), 
 5. [Set up your server](#4-set-up-your-server)
 6. [Commands](#commands)
 7. [Configuration reference](#configuration-reference)
-8. [Updating, logs and backups](#updating-logs-and-backups)
-9. [Security and privacy](#security-and-privacy)
-10. [Troubleshooting](#troubleshooting)
+8. [Hosting several servers](#hosting-several-servers)
+9. [Updating, logs and backups](#updating-logs-and-backups)
+10. [Security and privacy](#security-and-privacy)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -50,7 +51,7 @@ Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), 
 
 - A machine that stays on (a home server, Raspberry Pi 4/5, or a small VPS) with
   [Docker](https://docs.docker.com/engine/install/) and the Docker Compose plugin.
-- About 256 MB of RAM. The bot needs **no open ports**: it only makes outgoing connections to Discord and koruxa.com.
+- About 100–200 MB of RAM (the container is capped at 512 MB). The bot needs **no open ports**: it only makes outgoing connections to Discord and koruxa.com.
 - Admin rights (**Manage Server**) on the Discord server you want to add it to.
 - For the clan features: your clan's API token from the game (see [Clan token](#clan-token)).
 
@@ -64,7 +65,7 @@ You can also run it without Docker (Python 3.12+, `pip install -r requirements.t
 2. Open the **Bot** tab:
    - Click **Reset Token**, then copy the token. This is your `DISCORD_TOKEN`. **Keep it secret**: anyone with it controls your bot.
    - Leave all three **Privileged Gateway Intents** turned **off**. The bot doesn't need them.
-   - Optional: turn off **Public Bot** so only you can invite it.
+   - Optional: turn off **Public Bot** so only you can invite it (turn it on, or use `ALLOWED_GUILDS`, if you'll host other servers).
 3. Invite the bot to your server. Open this link, replacing `YOUR_APPLICATION_ID` with the **Application ID** from the **General Information** tab:
 
    ```
@@ -122,7 +123,7 @@ docker compose logs -f bot
 
 You should see `Synced N command(s)` and `Logged in as …`. Press `Ctrl+C` to stop following the logs (the bot keeps running).
 
-The container runs as a non-root user with a read-only filesystem, no Linux capabilities and a 256 MB memory limit. Its only writable storage is the `data/` folder (the SQLite database).
+The container runs as a non-root user with a read-only filesystem, no Linux capabilities and a 512 MB memory limit (about 180 MB is enough for five clans). Its only writable storage is the `data/` folder (the SQLite database).
 
 ---
 
@@ -172,7 +173,7 @@ Check everything with `/testalert feature:Clan Boss`.
 ### d. Link the clan token
 
 <a id="clan-token"></a>
-The clan features (bank, boss, clan XP, Institute) need your **clan's** API token. It's a different token from a personal one: it's managed by the clan in-game, in the clan's settings.
+The clan features (bank, boss, clan XP, Institute) need your **clan's** API token, linked separately in each server. It's a different token from a personal one: it's managed by the clan in-game, in the clan's settings.
 
 ```
 /link-clan
@@ -183,7 +184,7 @@ A pop-up asks for the token. The bot checks it with Koruxa, stores it encrypted,
 - The highscores, clan feed and `/topgains` only count linked characters **in that clan**.
 - Clan boss, bank, XP and Institute updates start within a minute.
 
-Running `/link-clan` again with another token replaces it. `/clear-clan` removes it (clan features stop; highscores then show every linked character). Only admins of the `GUILD_ID` server can change it.
+Running `/link-clan` again with another token replaces it. `/clear-clan` removes it (clan features stop; highscores then show every linked character). Both only affect the server they're run in, and need **Manage Server** there.
 
 ### e. Members link their characters
 
@@ -232,8 +233,8 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 | `/clan [public]` | Clan level and this week's top XP contributors |
 | `/clanbank [public]` | What's in the clan bank |
 | `/institute [public]` | Clan Institute research levels and what's next |
-| `/link-clan` *(admin)* | Set the clan's API token |
-| `/clear-clan` *(admin)* | Remove the clan API token |
+| `/link-clan` *(admin)* | Set this server's clan API token |
+| `/clear-clan` *(admin)* | Remove this server's clan API token |
 
 ### 🌀 World Boss
 
@@ -269,11 +270,13 @@ All settings live in `.env` (see `.env.example`). Restart after changing them: `
 |---|---|---|---|
 | `DISCORD_TOKEN` | ✅ | | Your bot's token from the Developer Portal |
 | `ENCRYPTION_KEY` | ✅ | | Fernet key that encrypts stored Koruxa tokens. Back it up |
-| `GUILD_ID` | | *(empty)* | Your server ID. Commands appear there instantly, and only its admins can change the clan token. Empty = commands sync globally (can take a while to appear the first time) |
-| `CLAN_TAG` | | *(empty)* | Only used when **no** clan token is linked: limit highscores/feed/`/topgains` to this clan tag. Empty = every linked character |
+| `GUILD_ID` | | *(empty)* | A server ID to register commands in instantly (handy while testing). Commands then appear **only** in that server, so leave it empty if the bot serves several servers. Empty = commands sync globally (can take a while to appear the first time) |
+| `ALLOWED_GUILDS` | | *(empty)* | The only servers this copy may be in (IDs, comma-separated). It leaves any other server straight away. Empty = any server |
+| `BOT_STATUS` | | *(empty)* | A custom status under the bot's name, e.g. who to contact if it breaks |
+| `CLAN_TAG` | | *(empty)* | Only for servers that haven't linked a clan token: limit their highscores/feed/`/topgains` to this clan tag. Empty = every linked character |
 | `HIGHSCORES_REFRESH_MINUTES` | | `15` | How often each linked player's profile is re-fetched (minimum 5) |
 | `WEEKLY_RESET_DAY` / `WEEKLY_RESET_HOUR` | | `Monday` / `0` | When the game's week resets (UTC); weekly recaps post then |
-| `HIGHSCORES_DEMO` | | *(empty)* | `1` adds 8 made-up players to preview full boards (only while no clan token is linked) |
+| `HIGHSCORES_DEMO` | | *(empty)* | `1` adds 8 made-up players to preview full boards (only in servers without a clan token) |
 | `LOG_LEVEL` | | `INFO` | `DEBUG`, `INFO` or `WARNING` |
 
 ### API limits
@@ -281,7 +284,22 @@ All settings live in `.env` (see `.env.example`). Restart after changing them: `
 Koruxa allows **240 requests/hour per personal token** and **120/hour per clan token**. The bot paces itself under both:
 
 - Highscores: one `/me` per linked character per refresh (4/hour each at the 15-minute default).
-- Clan token: about 85/hour (boss every minute, XP every 5, bank and Institute every 10). If other tools use the same clan token, you can hit the limit; the bot then backs off and logs `429`.
+- Clan token: about 85/hour per clan (boss every minute, XP every 5, bank and Institute every 10), each on its own token's limit. If other tools use the same clan token, you can hit the limit; the bot then backs off and logs `429`.
+
+---
+
+## Hosting several servers
+
+One copy of the bot can serve several Discord servers, for example a few clans that don't want to run their own:
+
+- **Each server links its own clan** with `/link-clan`. Its clan boss, bank, research and recaps come from that clan and post only there, and its highscores and feed count that clan's members. A server can't see or change another server's clan.
+- **Two servers with the same clan** (say a main and an alt server) share one poller: the clan is polled once and both get the updates.
+- **Members** `/link` as usual; links belong to the Discord user, so someone in two servers links once.
+- **Lock it down** with `ALLOWED_GUILDS` in `.env`, listing the server IDs you host. If anyone adds the bot elsewhere it leaves at once, so strangers can't use your machine. Leave `GUILD_ID` empty so commands appear in every server.
+- **Trust:** members' Koruxa tokens are stored (encrypted) on your machine, with your key. Make sure the clans you host are happy with that.
+- **Cost:** each clan adds about 85 requests/hour on its own clan token, plus 4/hour per linked player on their own tokens, and roughly 15 MB of memory. The 512 MB cap fits five clans comfortably.
+
+To invite the bot to another server, use the invite link from [step 1](#1-create-the-discord-bot) (the **Public Bot** setting must be on for anyone other than you to add it), add the new server's ID to `ALLOWED_GUILDS` if you use it, and restart: `docker compose up -d`.
 
 ---
 
@@ -312,7 +330,8 @@ Everything the bot remembers is in `data/bot.db`. To back up, copy `data/` **and
 
 | Problem | Fix |
 |---|---|
-| Commands don't show up | Set `GUILD_ID` for instant sync, restart, and reload Discord (`Ctrl+R`). Check the logs say `Synced N command(s)` |
+| Commands don't show up | Set `GUILD_ID` for instant sync (single server only), restart, and reload Discord (`Ctrl+R`). Check the logs say `Synced N command(s)`. In other servers, `GUILD_ID` must be empty |
+| The bot leaves a server right after joining | That server isn't in `ALLOWED_GUILDS`. Add its ID and restart |
 | `ENCRYPTION_KEY is not a valid Fernet key` | Generate one with the command in [step 2](#2-download-and-configure) |
 | Alerts don't post | Run `/alerts`; it lists missing channel permissions |
 | Role pings don't notify | The bot needs **Mention @everyone, @here and All Roles** in that channel |

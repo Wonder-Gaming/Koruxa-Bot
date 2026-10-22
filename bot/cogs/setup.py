@@ -129,8 +129,8 @@ class Setup(commands.Cog):
         lines += [f"⚠️ {p}" for p in channel_problems(channel, role)]
         if not info.live:
             lines.append("ℹ️ This feature isn't built yet, so it won't post anything.")
-        elif info.clan and not getattr(self.bot.get_cog("Clan"), "token", ""):
-            lines.append("ℹ️ This needs the clan's API token, so it won't post anything yet. Set it with **/link-clan**.")
+        elif info.clan and not ((cog := self.bot.get_cog("Clan")) and cog.tracker_for(guild.id)):  # type: ignore[attr-defined]
+            lines.append("ℹ️ This needs this server's clan API token, so it won't post anything yet. Set it with **/link-clan**.")
         if info.key in ROLE_FEATURES and role is None:
             lines.append("Tip: run **/rolepanel** so members can opt in to a ping role.")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)

@@ -40,6 +40,8 @@ class KoruxaBot(commands.Bot):
             command_prefix=commands.when_mentioned,
             intents=discord.Intents.default(),
             allowed_mentions=discord.AllowedMentions.none(),
+            # Sent on every (re)connect, so it survives reconnects without re-setting it.
+            activity=discord.CustomActivity(name=config.bot_status) if config.bot_status else None,
         )
         self.config = config
         self.db = Database(os.path.join(config.data_dir, "bot.db"))
@@ -97,16 +99,16 @@ class KoruxaBot(commands.Bot):
         self._membership[(guild.id, user_id)] = (result, time.monotonic())
         return result
 
-    @property
-    def clan_tag(self) -> str:
-        """The clan the highscores, feed and /topgains count: the loaded clan token's clan,
-        else CLAN_TAG from .env ("" = everyone)."""
-        return getattr(self.get_cog("Clan"), "clan_tag", "") or self.config.clan_tag
+    def clan_tag(self, guild_id: int | None) -> str:
+        """The clan a server's highscores, feed and /topgains count: the clan of the token that server
+        linked, else CLAN_TAG from .env ("" = everyone)."""
+        cog = self.get_cog("Clan")
+        return (cog.clan_tag_for(guild_id) if cog else "") or self.config.clan_tag  # type: ignore[attr-defined]
 
     async def clan_snapshots(self, guild: discord.Guild) -> list:
         """Linked characters shown on this server's highscores and feed: in the clan (see clan_tag),
         and linked by someone who is a member of the server."""
-        tag = self.clan_tag.lower()
+        tag = self.clan_tag(guild.id).lower()
         result = []
         for snap in await self.db.list_snapshots():
             if tag and (snap.clan_tag or "").lower() != tag:
@@ -117,6 +119,22 @@ class KoruxaBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (id %s) in %d server(s)", self.user, self.user.id, len(self.guilds))
+        for guild in list(self.guilds):
+            await self.leave_if_not_allowed(guild)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        log.info("Added to server %s (%s)", guild.id, guild.name)
+        await self.leave_if_not_allowed(guild)
+
+    async def leave_if_not_allowed(self, guild: discord.Guild) -> None:
+        """With ALLOWED_GUILDS set, this copy of the bot only serves those servers."""
+        allowed = self.config.allowed_guilds
+        if allowed and guild.id not in allowed:
+            log.warning("Leaving server %s (%s): not in ALLOWED_GUILDS", guild.id, guild.name)
+            try:
+                await guild.leave()
+            except discord.HTTPException as e:
+                log.warning("Couldn't leave server %s: %s", guild.id, e)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         # Only the command name: modal submissions carry the user's token in their data.

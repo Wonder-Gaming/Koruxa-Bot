@@ -1,18 +1,19 @@
 """Clan features, read with the clan's own API token.
 
-The token is set by an admin with /link-clan (stored encrypted in bot_state,
-like the personal tokens), replacing any earlier one, and removed with
-/clear-clan. The highscores, feed and /topgains count that token's clan.
+Each Discord server links its own clan token: an admin runs /link-clan (stored
+encrypted in bot_state "guild_clans", like the personal tokens) and /clear-clan
+removes it. That server's highscores, feed and /topgains count that clan, and
+its clan channels get that clan's updates. Servers that link the same clan
+share one ClanTracker, so each clan is polled once.
 
 One token reads /clan-bank, /clan-xp, /clan-boss and /clan-institute, 120
 requests per hour in total, with answers cached for 60 seconds. Polling uses
 about 85 of those an hour, leaving the rest for commands:
 - bank every 10 min: two messages edited in place, the bank summary and below
-  it the last 10 deposits/withdrawals plus pending requests (Clan Bank channel)
+  it the latest deposits/withdrawals plus pending requests (Clan Bank channel)
 - boss every minute (the cache makes faster pointless): one card edited when HP
   or the tier changes, with a Clan Boss role ping under it while the boss is
-  alive, deleted once it's dead (Clan Boss channel). The bot's member-list
-  status shows the boss tier and HP, or a countdown to the next one.
+  alive, deleted once it's dead (Clan Boss channel).
   Under the card, a second one ranks who has hit this boss hardest. The API
   has no per-boss damage, so it's each member's weekly boss_damage (clan-xp
   detail=members) minus a snapshot taken when the boss spawned, updated every
@@ -38,7 +39,6 @@ import asyncio
 import io
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -413,22 +413,6 @@ RESPAWN_KEYS = ("respawn_at", "next_spawn_at", "spawns_at", "next_boss_at", "coo
                 "available_at", "next_at")
 
 
-def presence_text(boss: Any) -> str | None:
-    """The bot's member-list status: tier and HP while alive, else a countdown to the next boss."""
-    if not isinstance(boss, dict) or not boss:
-        return None
-    tier = boss.get("tier", "?")
-    if boss_alive(boss):
-        hp = boss.get("hp") if isinstance(boss.get("hp"), dict) else {}
-        current, maximum = _number(hp.get("current")), _number(hp.get("max"))
-        pct = f" · {current / maximum:.0%} HP" if maximum else ""
-        return f"⚔️ Clan boss T{tier}{pct}"
-    text = f"💀 Clan boss T{tier} down"
-    if (at := next_spawn(boss)) and (left := (at - datetime.now(timezone.utc)).total_seconds()) > 0:
-        text += f" · next in {duration(left)}"
-    return text
-
-
 def next_spawn(boss: dict[str, Any]) -> datetime | None:
     """When the next boss spawns (a dead boss has "next_spawn_at", 12 hours after "defeated_at")."""
     nxt = _first(boss, RESPAWN_KEYS)
@@ -696,98 +680,61 @@ def damage_image(dmg: dict[str, Any] | None, boss: dict[str, Any], data: dict[st
     return render_boss_damage("Boss damage", subtitle, rows, " · ".join(footer), alive)
 
 
-# ---------- the cog ----------
+# ---------- one clan's tracker ----------
 
-class Clan(commands.Cog):
-    def __init__(self, bot: KoruxaBot):
+class ClanTracker:
+    """Everything for one clan: its token, polling and posting. Every server that linked this clan shares
+    one tracker, so a clan is polled once (on its own token's 120/hour) however many servers show it.
+    Saved state is keyed by the clan's id, so two clans never touch each other's."""
+
+    def __init__(self, bot: KoruxaBot, clan: dict[str, Any], token: str, guilds: set[int]):
         self.bot = bot
-        self.token = ""
-        self.clan: dict[str, Any] = {}  # id, name and tag of the token's clan, once seen
-        self._ticks = 0
-        self._tick_n = 0
-        self._token_ok = True
-        self._last_bank: str | None = None
-        self._last_boss: str | None = None
-        self._presence: tuple[str | None, float] = (None, 0.0)
-
-    async def cog_load(self) -> None:
-        token = await self.stored_token()
-        if token:
-            log.info("Using the clan token set with /link-clan")
-        self.use_token(token)
-        # Remembered from the last run, so the highscores filter is right before the first fetch.
-        known = await self.bot.db.get_state("clan_current") or {}
-        if token and known.get("token") == fingerprint(token):
-            self.clan = {k: known.get(k) for k in ("id", "name", "tag")}
-        self.tick.start()
+        self.clan = clan  # id, name, tag
+        self.token = token
+        self.guilds = guilds
+        self.token_ok = True
+        self.last_bank: str | None = None
+        self.last_boss: str | None = None
+        self.tick_n = 0
 
     @property
-    def clan_tag(self) -> str:
-        """The loaded token's clan tag ("" until it's known or with no token)."""
-        return str(self.clan.get("tag") or "") if self.token else ""
+    def name(self) -> str:
+        return f"{self.clan.get('name') or 'Clan'} [{self.clan.get('tag') or '?'}]"
 
-    async def note_clan(self, data: dict[str, Any]) -> None:
-        clan = data.get("clan")
-        if not isinstance(clan, dict) or not clan.get("tag"):
-            return
-        info = {k: clan.get(k) for k in ("id", "name", "tag")}
-        if info == self.clan:
-            return
-        self.clan = info
-        log.info("The clan token belongs to %s; highscores, feed and /topgains follow it", clan_name(data))
-        await self.bot.db.set_state("clan_current", {"token": fingerprint(self.token), **info})
+    def key(self, name: str) -> str:
+        """bot_state key for this clan's copy of `name` (e.g. clan_boss:81)."""
+        return f"{name}:{self.clan.get('id')}"
 
-    async def cog_unload(self) -> None:
-        self.tick.cancel()
+    async def targets(self, feature: str) -> list[Any]:
+        """This clan's servers that have a channel set for `feature`."""
+        return [cfg for cfg in await self.bot.db.feature_targets(feature) if cfg.guild_id in self.guilds]
 
-    async def stored_token(self) -> str:
-        state = await self.bot.db.get_state("clan_token") or {}
-        if not state.get("token_enc"):
-            return ""
-        try:
-            return self.bot.cipher.decrypt(state["token_enc"].encode())
-        except TokenDecryptError as e:
-            log.warning("Ignoring the /link-clan token: %s", e)
-            return ""
-
-    def use_token(self, token: str) -> None:
-        """Switch to another clan token ("" = clan features off). The trackers notice a different
-        clan by its id and take a fresh baseline, so nothing is announced twice."""
-        if self.token and self.token != token:
-            self.bot.api.forget(self.token)
-        if token != self.token:
-            self.clan = {}
-        self.token = token
-        self._token_ok = True
-        self._last_bank = self._last_boss = None
-        if not token:
-            log.info("No clan token: clan bank, boss, XP and Institute features are off")
+    async def post(self, feature: str, **kwargs: Any) -> dict[int, discord.Message]:
+        """post_alert, to this clan's servers only."""
+        sent: dict[int, discord.Message] = {}
+        for cfg in await self.targets(feature):
+            sent.update(await post_alert(self.bot, feature, guild_id=cfg.guild_id, **kwargs))
+        return sent
 
     async def fetch(self, path: str, params: dict[str, str] | None = None, max_wait: float = 60) -> dict[str, Any] | None:
         try:
             data = await self.bot.api.get(self.token, path, params, max_wait=max_wait)
         except TokenRevoked:
-            if self._token_ok:
-                log.warning("The clan token was rejected (revoked or rotated?). Set a new one with /link-clan.")
-            self._token_ok = False
+            if self.token_ok:
+                log.warning("%s: the clan token was rejected (revoked or rotated?). Set a new one with /link-clan.",
+                            self.name)
+            self.token_ok = False
             return None
         except KoruxaError as e:
-            log.warning("Clan /%s failed: %s", path, e)
+            log.warning("%s: /%s failed: %s", self.name, path, e)
             return None
-        if not self._token_ok:
-            log.info("The clan token works again")
-        self._token_ok = True
-        await self.note_clan(data)
+        if not self.token_ok:
+            log.info("%s: the clan token works again", self.name)
+        self.token_ok = True
         return data
 
-    @tasks.loop(minutes=1)
-    async def tick(self) -> None:
-        if not self.token:
-            return
-        if not self.clan:
-            await self.fetch("clan-xp")  # learn which clan the token belongs to
-        n, self._ticks = self._ticks, self._ticks + 1
-        self._tick_n = n
+    async def tick(self, n: int) -> None:
+        self.tick_n = n
         jobs = [
             (True, self.poll_boss),
             (n % 10 == 0, self.poll_bank),
@@ -801,24 +748,14 @@ class Clan(commands.Cog):
             try:
                 await job()
             except Exception:
-                log.exception("Clan update %s failed", job.__name__)
-
-    @tick.before_loop
-    async def _wait_ready(self) -> None:
-        await self.bot.wait_until_ready()
-
-    async def has_targets(self, *features: str) -> bool:
-        for feature in features:
-            if await self.bot.db.feature_targets(feature):
-                return True
-        return False
+                log.exception("%s: clan update %s failed", self.name, job.__name__)
 
     # ---------- bank ----------
 
     async def poll_bank(self) -> None:
-        """Two cards per server, both edited in place: the bank summary, and below it the last
-        15 changes (with pending withdrawal requests on top)."""
-        if not await self.has_targets("clanbank"):
+        """Two cards per server, both edited in place: the bank summary, and below it the latest changes
+        (with pending withdrawal requests on top)."""
+        if not await self.targets("clanbank"):
             return
         data = await self.fetch("clan-bank", {"limit": BANK_LOG_LIMIT})
         if data is None:
@@ -826,15 +763,15 @@ class Clan(commands.Cog):
         if requests := [r for r in data.get("requests") or [] if isinstance(r, dict)]:
             log.debug("Clan bank requests raw=%s", json.dumps(requests[0])[:1000])
         fingerprint = _embed_fingerprint(bank_embed(data)) + _embed_fingerprint(activity_embed(data))
-        if fingerprint == self._last_bank:
+        if fingerprint == self.last_bank:
             return
         cards = [
             (await asyncio.to_thread(bank_image, data), "clan-bank.png", None),
             (await asyncio.to_thread(activity_image, data), "bank-activity.png", None),
         ]
-        for cfg in await self.bot.db.feature_targets("clanbank"):
+        for cfg in await self.targets("clanbank"):
             await self.show_cards("clanbank", cfg, cards)
-        self._last_bank = fingerprint
+        self.last_bank = fingerprint
 
     async def show_cards(self, feature: str, cfg: Any, cards: list[tuple[bytes, str, str | None]],
                          repost: bool = False) -> None:
@@ -843,7 +780,7 @@ class Clan(commands.Cog):
         channel = self.bot.get_channel(cfg.channel_id)
         if not isinstance(channel, discord.TextChannel):
             return
-        key = f"{feature}_messages"
+        key = f"{feature}_messages"  # per server, so it doesn't need the clan id
         state = await self.bot.db.get_state(key) or {}
         ids = state.get(str(cfg.guild_id)) or []
 
@@ -877,53 +814,51 @@ class Clan(commands.Cog):
             log.warning("Couldn't post the %s cards in guild %s: %s", feature, cfg.guild_id, e)
         if sent:
             await self.bot.db.set_feature_field(cfg.guild_id, feature, "status_message_id", sent[0].id)
+        state = await self.bot.db.get_state(key) or {}  # re-read: another clan may have saved meanwhile
         state[str(cfg.guild_id)] = [m.id for m in sent]
         await self.bot.db.set_state(key, state)
 
     # ---------- boss ----------
 
     async def poll_boss(self) -> None:
-        """One card, edited when HP, shields, status or the tier changes. While the boss is alive a
-        Clan Boss role ping sits under the card; it is deleted once the boss is dead, and a new one
-        is posted when the next boss is up, or when the 4-hourly attempts refresh while it's still alive."""
-        if not await self.has_targets("clanboss"):
+        """Two cards (the boss, and the damage on it), edited when anything on them changes. While the boss is
+        alive a Clan Boss role ping sits under them; it is deleted once the boss is dead, and a new one is
+        posted when the next boss is up, or when the 4-hourly attempts refresh while it's still alive."""
+        if not await self.targets("clanboss"):
             return
         data = await self.fetch("clan-boss")
         if data is None:
             return
         boss = data.get("boss")
-        state = await self.bot.db.get_state("clan_boss") or {}
-        if state.get("clan_id") != clan_id(data):
-            state = {"pings": state.get("pings") or {}}
+        state = await self.bot.db.get_state(self.key("clan_boss")) or {}
 
         if not isinstance(boss, dict) or not boss:
             if state.get("key"):
-                log.info("Clan boss %s gone", state["key"])
+                log.info("%s: clan boss %s gone", self.name, state["key"])
             await self.delete_pings(state)
-            await self.bot.db.set_state("clan_boss", {"clan_id": clan_id(data), "pings": {}})
-            await self.set_presence(None)
+            await self.bot.db.set_state(self.key("clan_boss"), {"pings": {}})
             return
 
         key, alive = boss_key(boss), boss_alive(boss)
         if (key, alive) != (state.get("key"), state.get("alive")):
-            log.info("Clan boss %s: alive=%s raw=%s", key, alive, json.dumps(boss)[:4000])
+            log.info("%s: clan boss %s alive=%s raw=%s", self.name, key, alive, json.dumps(boss)[:4000])
 
-        dmg = await self.track_damage(boss, key, alive, clan_id(data))
+        dmg = await self.track_damage(boss, key, alive)
 
         # The embed text covers everything on the boss card, so it doubles as the change check.
         fingerprint = _embed_fingerprint(boss_embed(boss, data)) + json.dumps(
             [(r.player, r.damage) for r in damage_rows(dmg or {})] + [bool((dmg or {}).get("frozen"))])
-        if fingerprint != self._last_boss:
+        if fingerprint != self.last_boss:
             png = await asyncio.to_thread(boss_image, boss, data)
             damage_png = await asyncio.to_thread(damage_image, dmg, boss, data)
-            for cfg in await self.bot.db.feature_targets("clanboss"):
+            for cfg in await self.targets("clanboss"):
                 card_before = (await self.bot.db.get_state("clanboss_messages") or {}).get(str(cfg.guild_id))
                 await self.show_cards("clanboss", cfg, [(png, "clan-boss.png", boss_text(boss)),
                                                         (damage_png, "boss-damage.png", None)])
                 card_after = (await self.bot.db.get_state("clanboss_messages") or {}).get(str(cfg.guild_id))
                 if card_after != card_before:
                     await self.delete_pings(state, cfg.guild_id)  # the card was reposted: the ping goes below it
-            self._last_boss = fingerprint
+            self.last_boss = fingerprint
 
         pings = state.setdefault("pings", {})
         window = boss.get("window") if isinstance(boss.get("window"), dict) else {}
@@ -934,7 +869,7 @@ class Clan(commands.Cog):
         if not alive or key != state.get("key") or refreshed:
             await self.delete_pings(state)
         if refreshed:
-            log.info("Clan boss %s: attempts refreshed (window %s)", key, number)
+            log.info("%s: clan boss %s attempts refreshed (window %s)", self.name, key, number)
         if alive:
             tier = boss.get("tier", "?")
             if refreshed:
@@ -943,46 +878,31 @@ class Clan(commands.Cog):
                            f"{f'{per} more' if per else 'More'} attempts on tier {tier}. Go hit it.")
             else:
                 content = f"⚔️ **Clan boss tier {tier} is alive!** Go hit it."
-            for cfg in await self.bot.db.feature_targets("clanboss"):
+            for cfg in await self.targets("clanboss"):
                 if str(cfg.guild_id) in pings:
                     continue
                 sent = await post_alert(self.bot, "clanboss", guild_id=cfg.guild_id, content=content)
                 if message := sent.get(cfg.guild_id):
                     pings[str(cfg.guild_id)] = message.id
-        state.update({"clan_id": clan_id(data), "key": key, "alive": alive, "tier": boss.get("tier"),
-                      "window": number})
-        await self.bot.db.set_state("clan_boss", state)
-        await self.set_presence(presence_text(boss))
+        state.update({"key": key, "alive": alive, "tier": boss.get("tier"), "window": number})
+        await self.bot.db.set_state(self.key("clan_boss"), state)
 
-    async def set_presence(self, text: str | None) -> None:
-        """Show `text` as the bot's status. Re-sent every 10 minutes in case a reconnect dropped it."""
-        last, at = self._presence
-        if text == last and time.monotonic() - at < 600:
-            return
-        activity = discord.CustomActivity(name=text) if text else None
-        try:
-            await self.bot.change_presence(activity=activity)
-        except Exception as e:  # not connected right now; try again next poll
-            log.debug("Couldn't set presence: %s", e)
-            return
-        self._presence = (text, time.monotonic())
-
-    async def track_damage(self, boss: dict[str, Any], key: str, alive: bool, clan: Any) -> dict[str, Any] | None:
+    async def track_damage(self, boss: dict[str, Any], key: str, alive: bool) -> dict[str, Any] | None:
         """Per-member damage on this boss, from weekly totals minus a snapshot taken when the bot first saw
         it alive. Fetches clan-xp only at the spawn, every 5 minutes (with the XP poll's request), on the
         kill, and for DAMAGE_AFTER_KILL after it; then the result is frozen."""
-        dmg = await self.bot.db.get_state("clan_boss_damage") or {}
-        if dmg.get("boss") != key or dmg.get("clan_id") != clan:
-            dmg = {"boss": key, "clan_id": clan}
+        dmg = await self.bot.db.get_state(self.key("clan_boss_damage")) or {}
+        if dmg.get("boss") != key:
+            dmg = {"boss": key}
             if not alive:
-                await self.bot.db.set_state("clan_boss_damage", dmg)  # first seen dead: nothing to measure
+                await self.bot.db.set_state(self.key("clan_boss_damage"), dmg)  # first seen dead: nothing to measure
                 return dmg
         if dmg.get("frozen") or (not dmg.get("baseline_at") and not alive):
             return dmg
 
         defeated = when(boss.get("defeated_at"))
         just_died = not alive and dmg.get("alive", True)
-        due = (not dmg.get("baseline_at") or just_died or self._tick_n % 5 == 0)
+        due = (not dmg.get("baseline_at") or just_died or self.tick_n % 5 == 0)
         if not due:
             return dmg
         data = await self.fetch("clan-xp", MEMBER_PARAMS)
@@ -994,7 +914,8 @@ class Clan(commands.Cog):
         if not dmg.get("baseline_at"):
             dmg.update({"week": week, "baseline": damage, "latest": damage, "carried": {}, "names": names,
                         "baseline_at": now})
-            log.info("Boss damage %s: snapshot of %d members (total %s)", key, len(damage), sum(damage.values()))
+            log.info("%s: boss damage %s snapshot of %d members (total %s)", self.name, key, len(damage),
+                     sum(damage.values()))
         else:
             if week != dmg.get("week"):
                 # A weekly reset mid-fight: bank what was done before it; the new week starts from 0.
@@ -1004,24 +925,24 @@ class Clan(commands.Cog):
                     if done > 0:
                         carried[cid] = carried.get(cid, 0) + done
                 dmg.update({"week": week, "baseline": {}, "carried": carried})
-                log.info("Boss damage %s: weekly reset during the fight", key)
+                log.info("%s: boss damage %s, weekly reset during the fight", self.name, key)
             before = sum(r.damage for r in damage_rows(dmg))
             dmg["latest"] = damage
             dmg["names"] = {**(dmg.get("names") or {}), **names}
             after = sum(r.damage for r in damage_rows(dmg))
             if after != before:
-                log.info("Boss damage %s: %s total (+%s since last check)", key, after, after - before)
+                log.info("%s: boss damage %s, %s total (+%s since last check)", self.name, key, after, after - before)
         dmg["updated_at"] = now
         dmg["alive"] = alive
         if not alive and defeated and datetime.now(timezone.utc) - defeated >= DAMAGE_AFTER_KILL:
             dmg["frozen"] = True
-            log.info("Boss damage %s: final, %s", key,
+            log.info("%s: boss damage %s final, %s", self.name, key,
                      ", ".join(f"{r.player} {compact(r.damage)}" for r in damage_rows(dmg)[:5]))
-        await self.bot.db.set_state("clan_boss_damage", dmg)
+        await self.bot.db.set_state(self.key("clan_boss_damage"), dmg)
         return dmg
 
     async def delete_pings(self, state: dict[str, Any], guild_id: int | None = None) -> None:
-        """Remove the role ping under the boss card (in one server, or all)."""
+        """Remove the role ping under the boss card (in one server, or all of this clan's)."""
         pings = state.setdefault("pings", {})
         channels = {cfg.guild_id: cfg.channel_id for cfg in await self.bot.db.feature_targets("clanboss")}
         for guild, message_id in list(pings.items()):
@@ -1038,7 +959,7 @@ class Clan(commands.Cog):
     # ---------- XP and Institute (Clan Feed) ----------
 
     async def poll_xp(self) -> None:
-        if not await self.has_targets("feed"):
+        if not await self.targets("feed"):
             return
         data = await self.fetch("clan-xp", MEMBER_PARAMS)  # same request as the damage tracker, so it's cached
         if data is None:
@@ -1046,18 +967,18 @@ class Clan(commands.Cog):
         level = (data.get("xp") or {}).get("level")
         if not isinstance(level, int):
             return
-        state = await self.bot.db.get_state("clan_xp") or {}
+        state = await self.bot.db.get_state(self.key("clan_xp")) or {}
         old = state.get("level")
-        if state.get("clan_id") == clan_id(data) and isinstance(old, int) and level > old:
-            log.info("Clan %s levelled %s -> %s", clan_name(data), old, level)
+        if isinstance(old, int) and level > old:
+            log.info("%s levelled %s -> %s", self.name, old, level)
             # The default answer leaves out part of the level curve; member slots come from it.
             full = await self.fetch("clan-xp", {"curve": "1"}) or data
             png = await asyncio.to_thread(clan_level_card, full, old, level)
-            await post_alert(self.bot, "feed", image=png, filename="clan-level.png", ping=False)
-        await self.bot.db.set_state("clan_xp", {"clan_id": clan_id(data), "level": level})
+            await self.post("feed", image=png, filename="clan-level.png", ping=False)
+        await self.bot.db.set_state(self.key("clan_xp"), {"level": level})
 
     async def poll_institute(self) -> None:
-        if not await self.has_targets("feed"):
+        if not await self.targets("feed"):
             return
         data = await self.fetch("clan-institute")
         if data is None:
@@ -1065,25 +986,25 @@ class Clan(commands.Cog):
         nodes = {n["node_key"]: n for n in data.get("nodes") or [] if isinstance(n, dict) and n.get("node_key")}
         levels = {k: n.get("level", 0) for k, n in nodes.items()}
         research = active_research(data)
-        state = await self.bot.db.get_state("clan_institute") or {}
+        state = await self.bot.db.get_state(self.key("clan_institute"))
 
-        if state.get("clan_id") == clan_id(data):
+        if state is not None:
             before = state.get("levels") or {}
             for key, level in levels.items():
                 if isinstance(before.get(key), int) and level > before[key]:
                     node = nodes[key]
-                    log.info("Institute: %s reached level %s", key, level)
+                    log.info("%s Institute: %s reached level %s", self.name, key, level)
                     png = await asyncio.to_thread(research_done_card, data, node, level)
-                    await post_alert(self.bot, "feed", image=png, filename="research-complete.png", ping=False)
+                    await self.post("feed", image=png, filename="research-complete.png", ping=False)
             if research and research[0] != state.get("active"):
-                log.info("Institute: research started, raw=%s", json.dumps(data.get("active"))[:1000])
+                log.info("%s Institute: research started, raw=%s", self.name, json.dumps(data.get("active"))[:1000])
                 active = data.get("active")
                 end = when(_first(active, END_KEYS)) if isinstance(active, dict) else None
                 node = nodes.get(research[0].split(":")[0])
                 png = await asyncio.to_thread(research_started_card, data, research[1], node, end)
-                await post_alert(self.bot, "feed", image=png, filename="research-started.png", ping=False)
-        await self.bot.db.set_state("clan_institute", {
-            "clan_id": clan_id(data), "levels": levels, "active": research[0] if research else None,
+                await self.post("feed", image=png, filename="research-started.png", ping=False)
+        await self.bot.db.set_state(self.key("clan_institute"), {
+            "levels": levels, "active": research[0] if research else None,
         })
 
     # ---------- weekly recap ----------
@@ -1098,123 +1019,220 @@ class Clan(commands.Cog):
         """Post the clan's totals and top contributors for the week just ended, once, after the reset."""
         now = datetime.now(timezone.utc)
         reset = self.last_weekly_reset(now)
-        state = await self.bot.db.get_state("clan_weekly") or {}
+        state = await self.bot.db.get_state(self.key("clan_weekly")) or {}
         if state.get("reset") == reset.isoformat():
             return
         if now - reset < timedelta(minutes=2):
             return  # give the game a moment to close the week
-        await self.bot.db.set_state("clan_weekly", {"reset": reset.isoformat()})
+        await self.bot.db.set_state(self.key("clan_weekly"), {"reset": reset.isoformat()})
         if not state or now - reset > timedelta(hours=6):
-            log.info("Clan weekly recap: skipping the %s reset (first start or too late)", reset.isoformat())
+            log.info("%s weekly recap: skipping the %s reset (first start or too late)", self.name, reset.isoformat())
             return
-        if not await self.has_targets("feed"):
+        if not await self.targets("feed"):
             return
         data = await self.fetch("clan-xp", {"weeks": "2", "detail": "members"}, max_wait=300)
         if data is None:
             return
-        png = await asyncio.to_thread(self.recap_image, data, reset)
+        png = await asyncio.to_thread(recap_image, data, reset)
         if png is None:
-            log.info("Clan weekly recap: no data for the week before %s", reset.date())
+            log.info("%s weekly recap: no data for the week before %s", self.name, reset.date())
             return
-        await post_alert(self.bot, "feed", image=png, filename="clan-week.png", ping=False)
-        log.info("Posted the clan weekly recap")
+        await self.post("feed", image=png, filename="clan-week.png", ping=False)
+        log.info("Posted the weekly recap for %s", self.name)
 
-    @staticmethod
-    def recap_image(data: dict[str, Any], reset: datetime) -> bytes | None:
-        week_start = (reset - timedelta(days=7)).date()
-        key = week_start.isoformat()
-        week = next((w for w in data.get("weekly") or [] if isinstance(w, dict) and w.get("week_start") == key), None)
-        if week is None:
-            return None
-        members = sorted(
-            (m for m in data.get("weekly_members") or [] if isinstance(m, dict) and m.get("week_start") == key),
-            key=lambda m: -(m.get("xp") or 0),
-        )[:5]
 
-        def stat(value: Any) -> str:
-            return compact(value) if isinstance(value, (int, float)) and value else "—"
+def recap_image(data: dict[str, Any], reset: datetime) -> bytes | None:
+    week_start = (reset - timedelta(days=7)).date()
+    key = week_start.isoformat()
+    week = next((w for w in data.get("weekly") or [] if isinstance(w, dict) and w.get("week_start") == key), None)
+    if week is None:
+        return None
+    members = sorted(
+        (m for m in data.get("weekly_members") or [] if isinstance(m, dict) and m.get("week_start") == key),
+        key=lambda m: -(m.get("xp") or 0),
+    )[:5]
 
-        def hours(value: Any) -> str:
-            return f"{value:g}h" if isinstance(value, (int, float)) and value else "—"
+    def stat(value: Any) -> str:
+        return compact(value) if isinstance(value, (int, float)) and value else "—"
 
-        stats = [
-            ("⭐", "Clan XP", stat(week.get("xp"))),
-            ("📜", "Quests", stat(week.get("quests"))),
-            ("⚔️", "Boss damage", stat(week.get("boss_damage"))),
-            ("🏦", "Bank value", stat(week.get("bank_value"))),
-            ("🔥", "Firepit time", hours(week.get("firepit_hours"))),
-            ("👥", "Active members", stat(week.get("active_members"))),
-        ]
-        rows = [
-            Contributor(str(m.get("character") or "?"), stat(m.get("xp")), stat(m.get("quests")),
-                        stat(m.get("boss_damage")), hours(m.get("firepit_hours")))
-            for m in members
-        ]
-        xp = data.get("xp") or {}
-        footer = f"Clan level {num(xp.get('level'))}"
-        if isinstance(pct := xp.get("progress_pct"), (int, float)):
-            footer += f" · {pct:g}% to level {num((xp.get('level') or 0) + 1)}"
-        week_end = reset.date() - timedelta(days=1)
-        return render_clan_week(
-            "Weekly clan recap",
-            f"{clan_name(data)} · {week_start:%a %d %b} – {week_end:%a %d %b}",
-            stats, rows, footer,
-        )
+    def hours(value: Any) -> str:
+        return f"{value:g}h" if isinstance(value, (int, float)) and value else "—"
+
+    stats = [
+        ("⭐", "Clan XP", stat(week.get("xp"))),
+        ("📜", "Quests", stat(week.get("quests"))),
+        ("⚔️", "Boss damage", stat(week.get("boss_damage"))),
+        ("🏦", "Bank value", stat(week.get("bank_value"))),
+        ("🔥", "Firepit time", hours(week.get("firepit_hours"))),
+        ("👥", "Active members", stat(week.get("active_members"))),
+    ]
+    rows = [
+        Contributor(str(m.get("character") or "?"), stat(m.get("xp")), stat(m.get("quests")),
+                    stat(m.get("boss_damage")), hours(m.get("firepit_hours")))
+        for m in members
+    ]
+    xp = data.get("xp") or {}
+    footer = f"Clan level {num(xp.get('level'))}"
+    if isinstance(pct := xp.get("progress_pct"), (int, float)):
+        footer += f" · {pct:g}% to level {num((xp.get('level') or 0) + 1)}"
+    week_end = reset.date() - timedelta(days=1)
+    return render_clan_week(
+        "Weekly clan recap",
+        f"{clan_name(data)} · {week_start:%a %d %b} – {week_end:%a %d %b}",
+        stats, rows, footer,
+    )
+
+
+# ---------- the cog ----------
+
+# Per-clan tracker state; before multi-clan support these were single keys (migrated in cog_load).
+TRACKER_STATE = ("clan_boss", "clan_boss_damage", "clan_xp", "clan_institute", "clan_weekly")
+
+
+class Clan(commands.Cog):
+    """Each Discord server links its own clan token (/link-clan), saved encrypted in bot_state "guild_clans"
+    as {guild_id: {token_enc, clan: {id, name, tag}, set_by, set_at}}. Servers that link the same clan share
+    one ClanTracker."""
+
+    def __init__(self, bot: KoruxaBot):
+        self.bot = bot
+        self.links: dict[str, dict[str, Any]] = {}  # guild id -> saved link
+        self.trackers: dict[Any, ClanTracker] = {}  # clan id -> tracker
+        self._ticks = 0
+
+    async def cog_load(self) -> None:
+        await self.migrate_single_token()
+        self.links = await self.bot.db.get_state("guild_clans") or {}
+        self.rebuild()
+        for tracker in self.trackers.values():
+            log.info("Tracking %s for %d server(s)", tracker.name, len(tracker.guilds))
+        self.tick.start()
+
+    async def cog_unload(self) -> None:
+        self.tick.cancel()
+
+    async def migrate_single_token(self) -> None:
+        """Before multi-clan support there was one clan token for the whole bot. Give it to the server that
+        uses the clan features (or GUILD_ID), and move its tracker state to that clan's keys."""
+        old = await self.bot.db.get_state("clan_token") or {}
+        if await self.bot.db.get_state("guild_clans") is not None:
+            return
+        links: dict[str, Any] = {}
+        current = await self.bot.db.get_state("clan_current") or {}
+        if old.get("token_enc") and current.get("id") is not None:
+            guilds = {cfg.guild_id for f in ("clanboss", "clanbank", "feed") for cfg in await self.bot.db.feature_targets(f)}
+            home = self.bot.config.guild_id or (next(iter(guilds)) if len(guilds) == 1 else None)
+            if home is not None:
+                links[str(home)] = {"token_enc": old["token_enc"], "set_by": old.get("set_by"), "set_at": old.get("set_at"),
+                                    "clan": {k: current.get(k) for k in ("id", "name", "tag")}}
+                for name in TRACKER_STATE:
+                    if (value := await self.bot.db.get_state(name)) is not None:
+                        await self.bot.db.set_state(f"{name}:{current['id']}", value)
+                log.info("Moved the clan token to server %s (clan %s)", home, current.get("tag"))
+            else:
+                log.warning("Couldn't tell which server the old clan token belongs to; run /link-clan again")
+        await self.bot.db.set_state("guild_clans", links)
+        await self.bot.db.set_state("clan_token", {})
+
+    def token_for(self, link: dict[str, Any]) -> str:
+        try:
+            return self.bot.cipher.decrypt(link["token_enc"].encode())
+        except (TokenDecryptError, KeyError) as e:
+            log.warning("Ignoring a saved clan token: %s", e)
+            return ""
+
+    def rebuild(self) -> None:
+        """Group the servers' links by clan. Existing trackers are kept, so their change checks carry on."""
+        groups: dict[Any, dict[str, Any]] = {}
+        for gid, link in self.links.items():
+            clan = link.get("clan") or {}
+            token = self.token_for(link)
+            if not token or clan.get("id") is None:
+                continue
+            group = groups.setdefault(clan["id"], {"clan": clan, "guilds": set(), "token": token, "at": ""})
+            group["guilds"].add(int(gid))
+            if str(link.get("set_at") or "") >= group["at"]:  # the most recently linked token wins
+                group.update(token=token, at=str(link.get("set_at") or ""), clan=clan)
+        for cid in list(self.trackers):
+            if cid not in groups:
+                self.bot.api.forget(self.trackers.pop(cid).token)
+        for cid, group in groups.items():
+            tracker = self.trackers.get(cid)
+            if tracker is None:
+                self.trackers[cid] = ClanTracker(self.bot, group["clan"], group["token"], group["guilds"])
+                continue
+            if tracker.token != group["token"]:
+                self.bot.api.forget(tracker.token)
+                tracker.token, tracker.token_ok = group["token"], True
+            tracker.clan, tracker.guilds = group["clan"], group["guilds"]
+
+    def tracker_for(self, guild_id: int | None) -> ClanTracker | None:
+        link = self.links.get(str(guild_id)) if guild_id is not None else None
+        return self.trackers.get((link.get("clan") or {}).get("id")) if link else None
+
+    def clan_tag_for(self, guild_id: int | None) -> str:
+        """The clan tag of the token this server linked ("" if none)."""
+        link = self.links.get(str(guild_id)) if guild_id is not None else None
+        return str(((link or {}).get("clan") or {}).get("tag") or "")
+
+    @tasks.loop(minutes=1)
+    async def tick(self) -> None:
+        n, self._ticks = self._ticks, self._ticks + 1
+        for tracker in list(self.trackers.values()):
+            await tracker.tick(n)
+
+    @tick.before_loop
+    async def _wait_ready(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ---------- commands ----------
 
     async def command_data(self, interaction: discord.Interaction, path: str, public: bool,
                            params: dict[str, str] | None = None) -> dict[str, Any] | None:
-        if not self.token:
+        tracker = self.tracker_for(interaction.guild_id)
+        if tracker is None:
             await interaction.response.send_message(
-                "The clan token isn't set up yet, so I can't read clan data. An admin can add it with /link-clan.",
+                "This server hasn't linked a clan token, so I can't read clan data. An admin can add it with /link-clan.",
                 ephemeral=True,
             )
             return None
         await interaction.response.defer(ephemeral=not public, thinking=True)
-        data = await self.fetch(path, params, max_wait=10)
+        data = await tracker.fetch(path, params, max_wait=10)
         if data is None:
             await interaction.followup.send(
-                "Couldn't read the clan data right now." if self._token_ok
+                "Couldn't read the clan data right now." if tracker.token_ok
                 else "The clan token was rejected. An admin needs to set a new one with /link-clan."
             )
         return data
 
     @app_commands.command(name="clan", description="Clan level and this week's top XP contributors")
     @app_commands.describe(public="Show it to everyone in the channel (default: only you)")
+    @app_commands.guild_only()
     async def clan(self, interaction: discord.Interaction, public: bool = False) -> None:
         if data := await self.command_data(interaction, "clan-xp", public):
             await interaction.followup.send(embed=clan_embed(data))
 
     @app_commands.command(name="clanbank", description="What's in the clan bank")
     @app_commands.describe(public="Show it to everyone in the channel (default: only you)")
+    @app_commands.guild_only()
     async def clanbank(self, interaction: discord.Interaction, public: bool = False) -> None:
         if data := await self.command_data(interaction, "clan-bank", public, {"limit": BANK_LOG_LIMIT}):
             await interaction.followup.send(embed=bank_embed(data))
 
     @app_commands.command(name="institute", description="Clan Institute research levels and what's next")
     @app_commands.describe(public="Show it to everyone in the channel (default: only you)")
+    @app_commands.guild_only()
     async def institute(self, interaction: discord.Interaction, public: bool = False) -> None:
         if data := await self.command_data(interaction, "clan-institute", public):
             await interaction.followup.send(embed=institute_embed(data))
 
-    # ---------- admin: the clan token ----------
+    # ---------- admin: this server's clan token ----------
 
-    async def home_guild_only(self, interaction: discord.Interaction) -> bool:
-        """The clan token is shared by every server, so only the bot's own server (GUILD_ID) may change it."""
-        home = self.bot.config.guild_id
-        if home is None or interaction.guild_id == home:
-            return True
-        await interaction.response.send_message("The clan token can only be changed from the bot's home server.",
-                                                ephemeral=True)
-        return False
-
-    @app_commands.command(name="link-clan", description="Set the clan's API token for the clan bank, boss, XP and Institute (admin)")
+    @app_commands.command(name="link-clan", description="Set this server's clan API token for the clan bank, boss, XP and Institute (admin)")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     async def link_clan(self, interaction: discord.Interaction) -> None:
-        if await self.home_guild_only(interaction):
-            await interaction.response.send_modal(ClanTokenModal(self))
+        await interaction.response.send_modal(ClanTokenModal(self))
 
     async def finish_link_clan(self, interaction: discord.Interaction, token: str) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1235,42 +1253,47 @@ class Clan(commands.Cog):
             log.warning("Clan token check failed: %s", e)
             await interaction.followup.send("Couldn't reach the Koruxa API to check the token. Try again shortly.")
             return
+        clan = data.get("clan") if isinstance(data.get("clan"), dict) else {}
+        if clan.get("id") is None:
+            await interaction.followup.send("Koruxa didn't say which clan that token belongs to. Try again shortly.")
+            return
 
-        await self.bot.db.set_state("clan_token", {
+        gid = str(interaction.guild_id)
+        replaced = gid in self.links
+        self.links[gid] = {
             "token_enc": self.bot.cipher.encrypt(token).decode(),
             "set_by": interaction.user.id,
             "set_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "clan": clan_name(data),
-        })
-        replaced = bool(self.token)
-        self.use_token(token)
-        await self.note_clan(data)
-        log.info("User %s set the clan token (clan %s)", interaction.user.id, clan_id(data))
+            "clan": {k: clan.get(k) for k in ("id", "name", "tag")},
+        }
+        await self.bot.db.set_state("guild_clans", self.links)
+        self.rebuild()
+        log.info("User %s linked clan %s in guild %s", interaction.user.id, clan.get("id"), gid)
 
-        lines = [f"{'🔄 Replaced' if replaced else '✅ Set'} the clan token: **{clan_name(data)}**."]
-        if self.clan_tag:
-            lines.append(f"The highscores, clan feed and /topgains now count **[{self.clan_tag}]** members.")
+        tag = clan.get("tag")
+        lines = [f"{'🔄 Replaced' if replaced else '✅ Set'} this server's clan token: **{clan_name(data)}**."]
+        if tag:
+            lines.append(f"This server's highscores, clan feed and /topgains now count **[{tag}]** members.")
         lines.append("Clan bank, boss, XP and Institute updates start within a minute. "
                      "The token is stored encrypted; **/clear-clan** removes it.")
         await interaction.followup.send("\n".join(lines))
 
-    @app_commands.command(name="clear-clan", description="Remove the clan API token set with /link-clan (admin)")
+    @app_commands.command(name="clear-clan", description="Remove this server's clan API token (admin)")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     async def clear_clan(self, interaction: discord.Interaction) -> None:
-        if not await self.home_guild_only(interaction):
+        link = self.links.pop(str(interaction.guild_id), None)
+        if link is None:
+            await interaction.response.send_message("This server has no clan token set.", ephemeral=True)
             return
-        state = await self.bot.db.get_state("clan_token") or {}
-        if not state.get("token_enc"):
-            await interaction.response.send_message("No clan token is set.", ephemeral=True)
-            return
-        await self.bot.db.set_state("clan_token", {})
-        self.use_token("")
-        await self.set_presence(None)
-        log.info("User %s cleared the clan token", interaction.user.id)
+        await self.bot.db.set_state("guild_clans", self.links)
+        self.rebuild()
+        log.info("User %s cleared the clan token in guild %s", interaction.user.id, interaction.guild_id)
+        clan = link.get("clan") or {}
         await interaction.response.send_message(
-            f"🗑️ Removed the clan token for **{state.get('clan', 'the clan')}**. Clan bank, boss, XP and Institute "
-            "updates are off, and the highscores show every linked character, until **/link-clan** is used again.",
+            f"🗑️ Removed this server's clan token for **{clan.get('name') or 'the clan'}**. Clan bank, boss, XP and "
+            "Institute updates are off here, and the highscores show every linked character, until **/link-clan** "
+            "is used again.",
             ephemeral=True,
         )
 

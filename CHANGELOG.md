@@ -2,6 +2,22 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.3.0] - 2026-10-22
+
+### Added
+- **One bot, several clans.** Each Discord server links its own clan token with `/link-clan`. Its clan boss, damage card, bank, clan level-ups, research and weekly recap come from that clan and post only in that server, and its highscores, level-ups and `/topgains` count that clan's members. `/clan`, `/clanbank` and `/institute` answer for the server they're run in. Servers that link the same clan share one poller.
+- `ALLOWED_GUILDS`: the servers this copy may be in. It leaves any other server straight away (and at startup).
+- `BOT_STATUS`: a custom status under the bot's name (e.g. who to contact).
+- README: "Hosting several servers".
+
+### Changed
+- `/link-clan` and `/clear-clan` only affect the server they're run in, and any server's admins can use them (before, the token was shared by every server and limited to the `GUILD_ID` server).
+- The bot's status no longer shows the clan boss (one status line can't show several clans); use `BOT_STATUS` instead.
+- Memory cap raised from 256 MB to 512 MB (about 180 MB covers five clans).
+
+### Upgrading
+- Nothing to do for a single server: on first start, the clan token linked before moves to the server that uses the clan features (or to `GUILD_ID`). If the bot can't tell which server that is, run `/link-clan` again.
+
 ## [1.2.1] - 2026-10-20
 
 ### Fixed

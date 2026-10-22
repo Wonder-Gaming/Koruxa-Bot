@@ -10,7 +10,7 @@ services:
       - ./data:/app/data
     networks:
       - bot_net
-    mem_limit: 256m
+    mem_limit: 512m  # ~180 MB covers 5 clans of ~30 linked players; the rest is headroom
     read_only: true
     tmpfs:
       - /tmp

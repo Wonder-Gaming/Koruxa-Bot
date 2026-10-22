@@ -227,7 +227,7 @@ class Account(commands.Cog):
             + (f" ({_clan_line(me)})" if _clan_line(me) and not existing else "")
             + ("" if existing else f". That's {count}/{MAX_CHARACTERS} characters.")
         ]
-        clan_tag = self.bot.clan_tag
+        clan_tag = self.bot.clan_tag(interaction.guild_id)
         clan = me.get("clan") if isinstance(me.get("clan"), dict) else {}
         if clan_tag and str(clan.get("tag", "")).lower() != clan_tag.lower():
             lines.append(

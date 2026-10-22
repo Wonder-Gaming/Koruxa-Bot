@@ -178,7 +178,7 @@ class Feed(commands.Cog):
         rows = merge_level_ups([LevelUp(**i) for i in post.get("items") or []] if open_post else [], items)
         chunks = [rows[i:i + MAX_FEED_ROWS] for i in range(0, len(rows), MAX_FEED_ROWS)]
         footer = f"{now:%d %b %Y} · last update {now:%H:%M} UTC"
-        tag = self.bot.clan_tag
+        tag = self.bot.clan_tag(cfg.guild_id)
         subtitle = f"New levels from linked [{tag}] members" if tag else "New levels from linked players"
 
         for n, chunk in enumerate(chunks):

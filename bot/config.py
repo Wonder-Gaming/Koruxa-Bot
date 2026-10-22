@@ -21,7 +21,9 @@ class Config:
     highscores_demo: bool
     weekly_reset_day: int  # 0 = Monday … 6 = Sunday (UTC)
     weekly_reset_hour: int  # 0-23 (UTC)
-    clan_tag: str  # fallback for bot.clan_tag when no clan token is loaded ("" = everyone)
+    clan_tag: str  # for servers that haven't linked a clan token ("" = everyone)
+    allowed_guilds: frozenset[int]  # servers this bot may stay in (empty = any)
+    bot_status: str  # custom status shown in the member list ("" = none)
 
 
 def load_config() -> Config:
@@ -36,6 +38,11 @@ def load_config() -> Config:
         validate_key(encryption_key)
     except ValueError:
         raise ConfigError("ENCRYPTION_KEY is not a valid Fernet key (32 url-safe base64-encoded bytes)") from None
+
+    try:
+        allowed = frozenset(int(x) for x in os.environ.get("ALLOWED_GUILDS", "").replace(",", " ").split())
+    except ValueError:
+        raise ConfigError("ALLOWED_GUILDS must be Discord server IDs separated by commas") from None
 
     guild_raw = os.environ.get("GUILD_ID", "").strip()
     try:
@@ -70,4 +77,6 @@ def load_config() -> Config:
         weekly_reset_hour=reset_hour,
         clan_tag=os.environ.get("CLAN_TAG", "").strip().strip("[]"),
         highscores_demo=os.environ.get("HIGHSCORES_DEMO", "").strip().lower() in ("1", "true", "yes"),
+        allowed_guilds=allowed | ({guild_id} if guild_id and allowed else set()),
+        bot_status=os.environ.get("BOT_STATUS", "").strip()[:128],
     )

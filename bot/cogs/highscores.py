@@ -233,13 +233,16 @@ class Highscores(commands.Cog):
             for p in players:
                 if g := await gains(self.bot.db, p, GAINS_DAYS):
                     week_gains[p.character_id] = g.total_xp
-            # Demo players only fill out a preview; once a clan token is loaded the boards are its members only.
-            demo = self.bot.config.highscores_demo and not getattr(self.bot.get_cog("Clan"), "clan_tag", "")
+            # Demo players only fill out a preview; once a server links a clan token its boards are members only.
+            cog = self.bot.get_cog("Clan")
+            linked = bool(cog and cog.clan_tag_for(channel.guild.id))  # type: ignore[attr-defined]
+            demo = self.bot.config.highscores_demo and not linked
             if demo:
                 extra = demo_players()
                 players += extra
                 week_gains.update({p.character_id: p.total_xp // (5 + i) for i, p in enumerate(extra)})
-            clan = f"[{self.bot.clan_tag}]" if self.bot.clan_tag else ""
+            tag = self.bot.clan_tag(channel.guild.id)
+            clan = f"[{tag}]" if tag else ""
             boards = {
                 board: build_board(board, players, self.bot.config.highscores_minutes, demo, week_gains, clan)
                 for board in BOARDS
