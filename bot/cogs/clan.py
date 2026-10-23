@@ -646,15 +646,20 @@ def member_damage(data: dict[str, Any]) -> tuple[str | None, dict[str, int], dic
     return week, damage, names
 
 
-def damage_rows(dmg: dict[str, Any]) -> list[DamageRow]:
+def damage_rows(dmg: dict[str, Any], cap: float | None = None) -> list[DamageRow]:
     """Damage on this boss per member: earlier weeks' share (if the boss spanned a weekly reset) plus
-    this week's total minus the snapshot."""
+    this week's total minus the snapshot.
+
+    The game's boss_damage counter counts each attempt's full damage, overkill included, so it can add up
+    to more than the boss's HP (seen: +16T on a 9.15T boss). With `cap` (the HP actually removed), totals
+    are scaled down to it; each member's share of the counters is kept."""
     baseline, latest, carried = dmg.get("baseline") or {}, dmg.get("latest") or {}, dmg.get("carried") or {}
     done = {cid: carried.get(cid, 0) + max(latest.get(cid, 0) - baseline.get(cid, 0), 0)
             for cid in set(latest) | set(carried)}
     total = sum(done.values())
+    scale = cap / total if cap and total > cap else 1.0
     names = dmg.get("names") or {}
-    rows = [DamageRow(names.get(cid, "?"), v, v / total) for cid, v in done.items() if v > 0]
+    rows = [DamageRow(names.get(cid, "?"), v * scale, v / total) for cid, v in done.items() if v > 0]
     return sorted(rows, key=lambda r: -r.damage)
 
 
@@ -664,7 +669,10 @@ def damage_image(dmg: dict[str, Any] | None, boss: dict[str, Any], data: dict[st
     if not dmg or not dmg.get("baseline_at"):
         return render_boss_damage("Boss damage", subtitle, [],
                                   "Not tracked: the bot wasn't watching when this boss was fought", alive)
-    rows = damage_rows(dmg)
+    hp = boss.get("hp") if isinstance(boss.get("hp"), dict) else {}
+    dealt = _number(hp.get("max")) - _number(hp.get("current"))  # HP actually removed from the boss
+    rows = damage_rows(dmg, cap=dealt or None)
+    raw = sum(r.damage for r in damage_rows(dmg))
     footer = []
     since, started = when(dmg.get("baseline_at")), when(boss.get("started_at"))
     if since and started and since - started > timedelta(minutes=3):
@@ -673,6 +681,8 @@ def damage_image(dmg: dict[str, Any] | None, boss: dict[str, Any], data: dict[st
         count = f"Top {MAX_DAMAGE_ROWS} of {len(rows)} members" if len(rows) > MAX_DAMAGE_ROWS else \
             f"{len(rows)} member{'s' if len(rows) != 1 else ''}"
         footer.append(f"{count} · {compact(sum(r.damage for r in rows))} total")
+        if dealt and raw > dealt:
+            footer.append("scaled to the boss's HP")
     if dmg.get("frozen"):
         footer.append("Final")
     elif updated := when(dmg.get("updated_at")):
@@ -934,6 +944,16 @@ class ClanTracker:
                 log.info("%s: boss damage %s, %s total (+%s since last check)", self.name, key, after, after - before)
         dmg["updated_at"] = now
         dmg["alive"] = alive
+        # How far the counters run ahead of the HP actually removed (they include overkill). Logged to check
+        # over a few fights how fair scaling each member's share down to the HP is.
+        hp = boss.get("hp") if isinstance(boss.get("hp"), dict) else {}
+        removed = _number(hp.get("max")) - _number(hp.get("current"))
+        counted = sum(r.damage for r in damage_rows(dmg))
+        if removed and counted:
+            top = damage_rows(dmg)[:3]
+            log.info("%s: boss damage %s counters %s vs HP removed %s (x%.2f), %d hitting; top: %s", self.name, key,
+                     compact(counted), compact(removed), counted / removed, len(damage_rows(dmg)),
+                     ", ".join(f"{r.player} {r.share:.1%}" for r in top))
         if not alive and defeated and datetime.now(timezone.utc) - defeated >= DAMAGE_AFTER_KILL:
             dmg["frozen"] = True
             log.info("%s: boss damage %s final, %s", self.name, key,

@@ -594,8 +594,9 @@ def render_boss_damage(title: str, subtitle: str, rows: list[DamageRow], footer:
         d.text((dmg_x, mid), _short(row.damage), font=_font(32, "Bold"), fill=colour, anchor="lm")
         pct_w = 100
         _bar(d, (bar_x, mid - 12, right - pct_w, mid + 12), row.share, RED if alive else MUTED)
-        d.text((right, mid), f"{row.share:.0%}" if row.share >= 0.01 else "<1%", font=_font(26, "SemiBold"),
-               fill=NAME, anchor="rm")
+        share = "<1%" if row.share < 0.01 else ">99%" if 0.99 < row.share < 1 and f"{row.share:.0%}" == "100%" \
+            else f"{row.share:.0%}"  # only a real 100% shows as 100%
+        d.text((right, mid), share, font=_font(26, "SemiBold"), fill=NAME, anchor="rm")
         y += ROW
 
     _footer(d, footer)

@@ -2,6 +2,15 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.3.1] - 2026-10-23
+
+### Fixed
+- **Boss damage could add up to more than the boss's HP** (e.g. 16T on a 9.15T boss). The game's weekly boss damage counter includes overkill, so the card now keeps each member's share of the counters but scales the totals down to the HP actually removed. The footer says "scaled to the boss's HP" when it does.
+- A share just under 100% (e.g. 99.9998%) showed as "100%"; it now shows ">99%", so 100% only means one player did all of it.
+
+### Added
+- Each boss damage update logs how far the counters ran ahead of the HP removed, to check over a few fights how fair the scaling is.
+
 ## [1.3.0] - 2026-10-22
 
 ### Added
