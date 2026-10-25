@@ -19,7 +19,9 @@ about 85 of those an hour, leaving the rest for commands:
   detail=members) minus a snapshot taken when the boss spawned, updated every
   5 minutes with the XP poll's request (see track_damage)
 - XP every 5 min: clan level-ups (Clan Feed channel)
-- Institute every 10 min: research started and completed (Clan Feed channel)
+- Institute every 10 min: research started, pool filled (thanking its top 3 donors)
+  and completed (Clan Feed channel); and the Clan Institute channel: three messages
+  edited in place, top donors, every project's level progress, the current research
 - at the weekly reset: a clan recap card for the week just ended (Clan Feed)
 
 So far these were only seen from a new test clan, so withdrawal requests, the
@@ -51,8 +53,10 @@ from ..api import KoruxaError, RateLimited, TokenRevoked, fingerprint
 from ..crypto import TokenDecryptError
 from ..fmt import bar, compact, num, timestamp, title
 from ..render import (
-    Activity, Announcement, BankItem, BossCard, BossPart, Contributor, DamageRow, MAX_ACTIVITY_ROWS, MAX_DAMAGE_ROWS, render_announcement, render_bank,
-    render_bank_activity, render_boss, render_boss_damage, render_clan_week,
+    Activity, Announcement, BankItem, BossCard, BossPart, Contributor, DamageRow, Donor, MAX_ACTIVITY_ROWS,
+    MAX_DAMAGE_ROWS, Material, Research, render_announcement, render_bank, render_bank_activity, render_boss,
+    render_boss_damage, render_clan_week, render_donors, render_institute_overview, render_research,
+    ResearchRow,
 )
 from .worldboss import NAME_KEYS, _display, _embed_fingerprint, _first, _flatten, _name, event_key
 
@@ -690,6 +694,153 @@ def damage_image(dmg: dict[str, Any] | None, boss: dict[str, Any], data: dict[st
     return render_boss_damage("Boss damage", subtitle, rows, " · ".join(footer), alive)
 
 
+# ---------- clan Institute channel ----------
+
+def institute_status(data: dict[str, Any], node: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """(status, its pool entry) for one project: researching / filling / paused / idle / maxed."""
+    key = node.get("node_key")
+    active = data.get("active") if isinstance(data.get("active"), dict) else None
+    if active and active.get("node_key") == key:
+        if active.get("is_paused"):
+            return "paused", active
+        return ("researching" if active.get("pool_full") else "filling"), active
+    paused = next((p for p in data.get("paused") or [] if isinstance(p, dict) and p.get("node_key") == key), None)
+    if paused:
+        return "paused", paused
+    if isinstance(node.get("max_level"), int) and (node.get("level") or 0) >= node["max_level"]:
+        return "maxed", None
+    return "idle", None
+
+
+def item_label(m: dict[str, Any]) -> str:
+    """A material's name; some come lower-case from the API (e.g. "coins")."""
+    name = str(m.get("item_name") or title(m.get("item_key")))
+    return name[:1].upper() + name[1:]
+
+
+def research_card(data: dict[str, Any], node: dict[str, Any]) -> bytes:
+    status, pool = institute_status(data, node)
+    nxt = node.get("next") if isinstance(node.get("next"), dict) else {}
+    level, top = node.get("level") or 0, node.get("max_level")
+    if pool:
+        materials = [Material(item_label(m), _number(m.get("filled")), _number(m.get("needed")))
+                     for m in pool.get("materials") or [] if isinstance(m, dict)]
+    else:
+        materials = [Material(item_label(m), None, _number(m.get("qty")))
+                     for m in nxt.get("materials") or [] if isinstance(m, dict)]
+    now_bonus = node.get("bonus_now")
+    per = node.get("bonus_per_level")
+    next_bonus = (now_bonus or 0) + per if isinstance(per, (int, float)) and status != "maxed" else None
+    stats = [("✨", "Bonus now", bonus_text(node, now_bonus) if now_bonus else "None")]
+    if next_bonus is not None:
+        stats.append(("⏫", "Next level", bonus_text(node, next_bonus)))
+    time_sec = (pool or {}).get("time_sec") or nxt.get("time_sec")
+    if status != "maxed":
+        stats.append(("⏱️", "Research time", duration(time_sec)))
+    remaining = (pool or {}).get("time_remaining_sec")
+    end = (datetime.now(timezone.utc) + timedelta(seconds=remaining)) if status == "researching" and remaining else None
+    if end:
+        stats.append(("🏁", "Done at", f"{end:%d %b %H:%M} UTC"))
+    elif pool:
+        stats.append(("📦", "Pool", f"{_number(pool.get('pool_pct')):g}%"))
+    footer = {
+        "researching": "Research running" + (f" · done {end:%d %b %H:%M} UTC" if end else ""),
+        "filling": "Donate the missing materials in game · the timer starts when the pool is full",
+        "paused": "Paused · donations so far are kept",
+        "idle": "Not started yet · an officer picks it in game",
+        "maxed": "Fully researched",
+    }[status]
+    target = (pool or {}).get("target_level") or nxt.get("target_level")
+    return render_research(Research(
+        str(node.get("name") or title(node.get("node_key"))),
+        f"{clan_name(data)} Institute · level {level}" + (f" / {top}" if top else ""),
+        str(node.get("description") or ""), status, f"Level {target}" if target and status != "maxed" else "",
+        stats, materials, footer,
+    ))
+
+
+BONUS_NAMES = {"clan_xp": "clan XP", "clan_drop_rate": "drop rate", "clan_boss_damage_shared": "clan boss damage",
+               "clan_boss_damage": "clan boss damage", "clan_research_speed": "research speed",
+               "clan_firepit_stage": "firepit stage"}
+OVERVIEW_ORDER = {"researching": 0, "filling": 1, "paused": 2, "idle": 3, "maxed": 4}
+
+
+def institute_overview(data: dict[str, Any]) -> bytes:
+    """Every project's level progress on one card."""
+    rows = []
+    for n in data.get("nodes") or []:
+        if not isinstance(n, dict):
+            continue
+        status, pool = institute_status(data, n)
+        detail = ""
+        if status in ("filling", "paused") and pool:
+            detail = f"pool {_number(pool.get('pool_pct')):g}%"
+        elif status == "researching" and pool and pool.get("time_remaining_sec"):
+            detail = f"{duration(pool['time_remaining_sec'])} left"
+        btype = str(n.get("bonus_type") or "")
+        rows.append(ResearchRow(
+            str(n.get("name") or title(n.get("node_key"))), status, detail, int(n.get("level") or 0),
+            int(n.get("max_level") or 0), bonus_text(n, n.get("bonus_now")) if n.get("bonus_now") else "None",
+            BONUS_NAMES.get(btype, btype.replace("clan_", "").replace("_", " ")),
+        ))
+    rows.sort(key=lambda r: (OVERVIEW_ORDER.get(r.status, 9), -r.level))
+    speed = data.get("speed_bonus_pct")
+    footer = "Lighter piece = the level being worked on" + (f" · research speed +{speed:g}%" if speed else "")
+    return render_institute_overview(clan_name(data), rows, footer)
+
+
+def institute_cards(data: dict[str, Any]) -> list[tuple[bytes, str, str | None]]:
+    """The Institute channel: all-time top donors, every project's level progress, then the research being
+    worked on now (its pool filling, or running). Always three messages, edited in place."""
+    donors = [Donor(str(t.get("name") or "?"), num(t.get("qty")))
+              for t in data.get("lifetime_top") or [] if isinstance(t, dict)]
+    speed = data.get("speed_bonus_pct")
+    footer = "All-time donations to the Institute · updates every 10 minutes"
+    if isinstance(speed, (int, float)) and speed:
+        footer += f" · research speed +{speed:g}%"
+    cards = [(render_donors("Top Institute donors", f"{clan_name(data)} · all time", donors, footer),
+              "institute-donors.png", None),
+             (institute_overview(data), "institute-overview.png", None)]
+    active = data.get("active") if isinstance(data.get("active"), dict) else None
+    node = next((n for n in data.get("nodes") or [] if isinstance(n, dict) and active
+                 and n.get("node_key") == active.get("node_key")), None)
+    if node is not None:
+        cards.append((research_card(data, node), "institute-research.png", None))
+    else:
+        paused = [str(p.get("name")) for p in data.get("paused") or [] if isinstance(p, dict) and p.get("name")]
+        cards.append((render_research(Research(
+            "No research running", f"{clan_name(data)} Institute",
+            "An officer can pick the next project in game; its material pool will show here."
+            + (f" Paused: {', '.join(paused)}." if paused else ""),
+            "none", "", [], [], "Updates every 10 minutes",
+        )), "institute-research.png", None))
+    return cards
+
+
+MEDALS_EMOJI = ["🥇", "🥈", "🥉"]
+
+
+def pool_thanks_card(data: dict[str, Any], active: dict[str, Any]) -> bytes | None:
+    """Clan feed: a research pool just filled; thank its top 3 donors (items summed over every material)."""
+    given: dict[str, float] = {}
+    for c in active.get("contributors") or []:
+        if isinstance(c, dict) and c.get("name") and _number(c.get("qty")) > 0:
+            given[c["name"]] = given.get(c["name"], 0) + _number(c.get("qty"))
+    if not given:
+        return None
+    top = sorted(given.items(), key=lambda kv: -kv[1])[:3]
+    stats = [(MEDALS_EMOJI[i], f"{num(int(qty))} items", name) for i, (name, qty) in enumerate(top)]
+    secs = active.get("time_remaining_sec") or active.get("time_sec")
+    end = datetime.now(timezone.utc) + timedelta(seconds=secs) if isinstance(secs, (int, float)) and secs else None
+    return render_announcement(Announcement(
+        "🎉", PURPLE_RGB, "Research pool filled", f"{clan_name(data)} Institute",
+        f"{active.get('name') or 'Research'} level {active.get('target_level', '?')}",
+        "Research is running now" + (f" · done {end:%d %b %H:%M} UTC" if end else ""),
+        stats, None,
+        f"Thank you to all {len(given)} donor{'s' if len(given) != 1 else ''} · {num(int(sum(given.values())))} items",
+    ))
+
+
 # ---------- one clan's tracker ----------
 
 class ClanTracker:
@@ -705,6 +856,7 @@ class ClanTracker:
         self.token_ok = True
         self.last_bank: str | None = None
         self.last_boss: str | None = None
+        self.last_institute: str | None = None
         self.tick_n = 0
 
     @property
@@ -718,6 +870,10 @@ class ClanTracker:
     async def targets(self, feature: str) -> list[Any]:
         """This clan's servers that have a channel set for `feature`."""
         return [cfg for cfg in await self.bot.db.feature_targets(feature) if cfg.guild_id in self.guilds]
+
+    async def channels_key(self, feature: str) -> str:
+        """Part of a change check: when a server picks (or changes) a channel, the cards are drawn again."""
+        return json.dumps(sorted((cfg.guild_id, cfg.channel_id) for cfg in await self.targets(feature)))
 
     async def post(self, feature: str, **kwargs: Any) -> dict[int, discord.Message]:
         """post_alert, to this clan's servers only."""
@@ -772,7 +928,8 @@ class ClanTracker:
             return
         if requests := [r for r in data.get("requests") or [] if isinstance(r, dict)]:
             log.debug("Clan bank requests raw=%s", json.dumps(requests[0])[:1000])
-        fingerprint = _embed_fingerprint(bank_embed(data)) + _embed_fingerprint(activity_embed(data))
+        fingerprint = (_embed_fingerprint(bank_embed(data)) + _embed_fingerprint(activity_embed(data))
+                       + await self.channels_key("clanbank"))
         if fingerprint == self.last_bank:
             return
         cards = [
@@ -857,7 +1014,8 @@ class ClanTracker:
 
         # The embed text covers everything on the boss card, so it doubles as the change check.
         fingerprint = _embed_fingerprint(boss_embed(boss, data)) + json.dumps(
-            [(r.player, r.damage) for r in damage_rows(dmg or {})] + [bool((dmg or {}).get("frozen"))])
+            [(r.player, r.damage) for r in damage_rows(dmg or {})] + [bool((dmg or {}).get("frozen"))]
+        ) + await self.channels_key("clanboss")
         if fingerprint != self.last_boss:
             png = await asyncio.to_thread(boss_image, boss, data)
             damage_png = await asyncio.to_thread(damage_image, dmg, boss, data)
@@ -998,15 +1156,20 @@ class ClanTracker:
         await self.bot.db.set_state(self.key("clan_xp"), {"level": level})
 
     async def poll_institute(self) -> None:
-        if not await self.targets("feed"):
+        if not (await self.targets("feed") or await self.targets("institute")):
             return
         data = await self.fetch("clan-institute")
         if data is None:
+            return
+        await self.show_institute(data)
+        if not await self.targets("feed"):
             return
         nodes = {n["node_key"]: n for n in data.get("nodes") or [] if isinstance(n, dict) and n.get("node_key")}
         levels = {k: n.get("level", 0) for k, n in nodes.items()}
         research = active_research(data)
         state = await self.bot.db.get_state(self.key("clan_institute"))
+        active = data.get("active") if isinstance(data.get("active"), dict) else None
+        pool_full = bool(active and active.get("pool_full"))
 
         if state is not None:
             before = state.get("levels") or {}
@@ -1023,9 +1186,26 @@ class ClanTracker:
                 node = nodes.get(research[0].split(":")[0])
                 png = await asyncio.to_thread(research_started_card, data, research[1], node, end)
                 await self.post("feed", image=png, filename="research-started.png", ping=False)
+            elif research and active and pool_full and state.get("pool_full") is False:
+                log.info("%s Institute: pool filled for %s", self.name, research[0])
+                if png := await asyncio.to_thread(pool_thanks_card, data, active):
+                    await self.post("feed", image=png, filename="research-pool-filled.png", ping=False)
         await self.bot.db.set_state(self.key("clan_institute"), {
-            "levels": levels, "active": research[0] if research else None,
+            "levels": levels, "active": research[0] if research else None, "pool_full": pool_full,
         })
+
+    async def show_institute(self, data: dict[str, Any]) -> None:
+        """The Institute channel: top donors, then every project's pool, edited in place."""
+        if not await self.targets("institute"):
+            return
+        content = {k: v for k, v in data.items() if k not in ("generated_at", "cache_seconds", "rate_limit_per_hour")}
+        fingerprint = json.dumps(content, sort_keys=True, default=str) + await self.channels_key("institute")
+        if fingerprint == self.last_institute:
+            return
+        cards = await asyncio.to_thread(institute_cards, data)
+        for cfg in await self.targets("institute"):
+            await self.show_cards("institute", cfg, cards)
+        self.last_institute = fingerprint
 
     # ---------- weekly recap ----------
 

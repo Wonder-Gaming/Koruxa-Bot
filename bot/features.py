@@ -24,6 +24,8 @@ FEATURES: dict[str, Feature] = {
         Feature("highscores", "Clan Highscores", "🏆", "Overall, Combat, Gathering and Artisan boards", live=True),
         Feature("clanboss", "Clan Boss", "⚔️", "Clan boss fights: start, updates and kills", live=True, clan=True),
         Feature("clanbank", "Clan Bank", "🏦", "Bank summary, deposits, withdrawals and requests", live=True, clan=True),
+        Feature("institute", "Clan Institute", "🏛️", "Top donors and every research project's material pool",
+                live=True, clan=True),
         Feature("enchant", "Enchant Queue", "✨", "Enchant queue updates", live=False),
     ]
 }

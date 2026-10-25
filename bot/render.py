@@ -647,3 +647,198 @@ def render_announcement(a: Announcement) -> bytes:
     return _png(img)
 
 
+# ---------- clan Institute channel ----------
+
+@dataclass
+class Donor:
+    player: str
+    amount: str  # e.g. "699,154"
+
+
+def render_donors(title: str, subtitle: str, rows: list[Donor], footer: str) -> bytes:
+    """Up to ten donors, best first (the Institute's all-time top contributors)."""
+    shown = rows[:10]
+    row_h = (BODY - COLH) // 10
+    img, d = _card(PURPLE)
+    _header(img, d, "🏅", title, subtitle, PURPLE)
+    x0 = PAD + 20
+    rank_x, player_x, amount_x = x0 + 8, x0 + 100, x0 + 900
+    y = PAD + HEAD
+    _headings(d, y, [(player_x, "Member"), (amount_x, "Items donated")])
+    y += COLH
+    for i, row in enumerate(shown):
+        if i % 2 == 0:
+            d.rounded_rectangle((x0 - 6, y, W - PAD - 6, y + row_h - 4), 12, fill=ROW_SHADE)
+        mid = y + (row_h - 4) // 2
+        if i < len(MEDALS):
+            _paste_emoji(img, MEDALS[i][0], 40, (rank_x, mid - 20))
+        else:
+            d.text((rank_x + 8, mid), f"#{i + 1}", font=_font(26, "Bold"), fill=FAINT, anchor="lm")
+        name, font = _shrink(d, row.player, 28, "SemiBold", amount_x - player_x - 30, 20)
+        d.text((player_x, mid), name, font=font, fill=TEXT, anchor="lm")
+        d.text((amount_x, mid), row.amount, font=_font(30, "Bold"), fill=MEDALS[i][2] if i < len(MEDALS) else NAME,
+               anchor="lm")
+        y += row_h
+    if not shown:
+        d.text((player_x, y + row_h // 2), "No donations yet", font=_font(28, "Medium"), fill=MUTED, anchor="lm")
+    _footer(d, footer)
+    return _png(img)
+
+
+@dataclass
+class Material:
+    name: str
+    donated: float | None  # None = this project's pool isn't open, so nothing can be donated yet
+    needed: float
+
+
+@dataclass
+class Research:
+    name: str
+    subtitle: str  # e.g. "Example [EX] Institute · level 3 / 25"
+    description: str
+    status: str  # "researching", "filling", "paused", "idle" or "maxed"
+    target: str  # e.g. "Level 4", or "" when maxed
+    stats: list[tuple[str, str, str]]  # tiles: (emoji, label, value)
+    materials: list[Material]
+    footer: str
+
+
+RESEARCH_STATUS = {
+    "researching": ("RESEARCHING", GREEN, (20, 60, 38)),
+    "filling": ("FILLING POOL", GOLD, (66, 52, 18)),
+    "paused": ("PAUSED", MUTED, (48, 41, 66)),
+    "idle": ("NOT STARTED", FAINT, (40, 35, 55)),
+    "none": ("IDLE", FAINT, (40, 35, 55)),
+    "maxed": ("MAXED", PURPLE, (52, 30, 74)),
+}
+
+
+def _wrap(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int, lines: int) -> list[str]:
+    """Split text into at most `lines` lines that fit `width`; the last one ends in … if cut."""
+    out: list[str] = []
+    words = text.split()
+    while words and len(out) < lines:
+        line = words.pop(0)
+        while words and d.textlength(line + " " + words[0], font=font) <= width:
+            line += " " + words.pop(0)
+        out.append(line)
+    if words and out:
+        out[-1] = _fit(d, out[-1] + " " + " ".join(words), font, width)
+    return out
+
+
+def render_research(r: Research) -> bytes:
+    """One Institute project: status, what it gives, and each material donated / needed / left."""
+    label, colour, back = RESEARCH_STATUS.get(r.status, RESEARCH_STATUS["idle"])
+    img, d = _card(PURPLE if r.status != "idle" else MUTED)
+    _header(img, d, "🏛️", r.name, r.subtitle, PURPLE)
+    x0, right = PAD + 20, W - PAD - 12
+    left = _pill(d, right, PAD + 50, label, colour, back)
+    if r.target:
+        _pill(d, left - 12, PAD + 50, r.target.upper(), NAME, (48, 41, 66))
+
+    y = PAD + HEAD - 6
+    for line in _wrap(d, r.description, _font(24, "Medium"), right - x0, 2):
+        d.text((x0, y + 14), line, font=_font(24, "Medium"), fill=MUTED, anchor="lm")
+        y += 32
+    y += 14
+    if r.stats:
+        y = _tiles(img, d, y, r.stats, per_row=4) - 8
+
+    if r.materials:
+        mat_h = min(72, (H - PAD - FOOT - y - COLH) // max(len(r.materials), 1))
+        name_x, have_x, bar_x, left_x = x0 + 8, x0 + 470, x0 + 760, right
+        _headings(d, y, [(name_x, "Material"), (have_x, "Donated / needed"), (bar_x, "Progress")])
+        d.text((left_x, y + 16), "LEFT", font=_font(22, "Bold"), fill=FAINT, anchor="ra")
+        y += COLH
+        for i, m in enumerate(r.materials):
+            if i % 2 == 0:
+                d.rounded_rectangle((x0 - 6, y, W - PAD - 6, y + mat_h - 6), 12, fill=ROW_SHADE)
+            mid = y + (mat_h - 6) // 2
+            d.text((name_x, mid), _fit(d, m.name, _font(28, "SemiBold"), have_x - name_x - 20),
+                   font=_font(28, "SemiBold"), fill=TEXT, anchor="lm")
+            if m.donated is None:
+                d.text((have_x, mid), f"— / {_short(m.needed)}", font=_font(26, "Medium"), fill=FAINT, anchor="lm")
+                _bar(d, (bar_x, mid - 10, right - 190, mid + 10), 0, PURPLE)
+                d.text((left_x, mid), _short(m.needed), font=_font(26, "Bold"), fill=FAINT, anchor="rm")
+            else:
+                frac = m.donated / m.needed if m.needed else 1
+                done = m.donated >= m.needed
+                d.text((have_x, mid), f"{_short(m.donated)} / {_short(m.needed)}", font=_font(26, "Medium"),
+                       fill=NAME, anchor="lm")
+                _bar(d, (bar_x, mid - 10, right - 190, mid + 10), frac, GREEN if done else GOLD)
+                d.text((left_x, mid), "✓ done" if done else _short(m.needed - m.donated), font=_font(26, "Bold"),
+                       fill=GREEN if done else GOLD, anchor="rm")
+            y += mat_h
+    elif r.status == "maxed":
+        d.text((x0, y + 40), "Fully researched: nothing left to donate.", font=_font(30, "Medium"), fill=MUTED,
+               anchor="lm")
+    _footer(d, r.footer)
+    return _png(img)
+
+
+@dataclass
+class ResearchRow:
+    name: str
+    status: str  # a RESEARCH_STATUS key
+    detail: str  # after the status, e.g. "pool 83.4%" or "2h 10m left"
+    level: int
+    max_level: int
+    bonus: str  # e.g. "+6%", or "None"
+    bonus_label: str  # e.g. "clan XP"
+
+
+def render_institute_overview(subtitle: str, rows: list[ResearchRow], footer: str) -> bytes:
+    """Every Institute project on one card: level towards max (one segment per level up to 10 levels; the
+    lighter piece is the level being worked on), status, and the bonus it gives now."""
+    total = sum(r.level for r in rows)
+    top = sum(r.max_level for r in rows)
+    img, d = _card(PURPLE)
+    _header(img, d, "🏛️", "Clan Institute", f"{subtitle} · {len(rows)} projects · {total} / {top} levels researched",
+            PURPLE)
+    x0, right = PAD + 20, W - PAD - 12
+    y = PAD + HEAD - 4
+    _bar(d, (x0, y, right, y + 14), total / top if top else 0, PURPLE)  # the clan's overall research progress
+    y += 34
+    name_x, bar_x, bar_end, lvl_x, bonus_x = x0 + 8, x0 + 400, x0 + 900, x0 + 1010, x0 + 1150
+    _headings(d, y - 10, [(name_x, "Project"), (bar_x, "Level"), (bonus_x, "Bonus now")])
+    y += COLH - 10
+    row_h = min(96, (H - PAD - FOOT - y) // max(len(rows), 1))
+    working_fill = (90, 70, 130)
+    for i, r in enumerate(rows):
+        label, colour, _ = RESEARCH_STATUS.get(r.status, RESEARCH_STATUS["idle"])
+        if i % 2 == 0:
+            d.rounded_rectangle((x0 - 6, y, W - PAD - 6, y + row_h - 6), 14, fill=ROW_SHADE)
+        mid = y + (row_h - 6) // 2
+        d.text((name_x, mid - 12), _fit(d, r.name, _font(30, "SemiBold"), bar_x - name_x - 30),
+               font=_font(30, "SemiBold"), fill=TEXT, anchor="lm")
+        d.ellipse((name_x, mid + 16, name_x + 12, mid + 28), fill=colour)
+        status = label.capitalize() + (f" · {r.detail}" if r.detail else "")
+        d.text((name_x + 22, mid + 22), _fit(d, status, _font(21, "Medium"), bar_x - name_x - 50),
+               font=_font(21, "Medium"), fill=colour if r.status != "idle" else FAINT, anchor="lm")
+        working = r.status in ("filling", "researching") and r.level < r.max_level
+        if 0 < r.max_level <= 10:
+            gap = 8
+            seg = (bar_end - bar_x - gap * (r.max_level - 1)) / r.max_level
+            for k in range(r.max_level):
+                sx = bar_x + k * (seg + gap)
+                fill = PURPLE if k < r.level else working_fill if working and k == r.level else BAR_BACK
+                d.rounded_rectangle((sx, mid - 11, sx + seg, mid + 11), 11, fill=fill)
+        else:
+            frac = r.level / r.max_level if r.max_level else 0
+            _bar(d, (bar_x, mid - 11, bar_end, mid + 11), frac, GREEN if r.status == "maxed" else PURPLE)
+            if working:
+                px = bar_x + (bar_end - bar_x) * frac
+                nx = bar_x + (bar_end - bar_x) * (r.level + 1) / r.max_level
+                d.rounded_rectangle((px, mid - 11, nx, mid + 11), 6, fill=working_fill)
+        d.text((lvl_x, mid), f"{r.level} / {r.max_level}", font=_font(28, "Bold"),
+               fill=GREEN if r.status == "maxed" else NAME, anchor="lm")
+        d.text((bonus_x, mid - 12), r.bonus, font=_font(28, "Bold"), fill=GOLD if r.bonus != "None" else FAINT,
+               anchor="lm")
+        d.text((bonus_x, mid + 20), _fit(d, r.bonus_label, _font(20, "Medium"), right - bonus_x),
+               font=_font(20, "Medium"), fill=MUTED, anchor="lm")
+        y += row_h
+    _footer(d, footer)
+    return _png(img)
+

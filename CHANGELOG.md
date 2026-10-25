@@ -2,6 +2,21 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.4.0] - 2026-10-25
+
+### Added
+- **Clan Institute channel** (`/setchannel feature:Clan Institute`): three messages, edited in place every 10 minutes:
+  1. the top 10 donors of all time;
+  2. every research project on one card: level towards max, status (researching, filling the pool, paused, not started, maxed) and the bonus it gives now;
+  3. the current research: each material's donated / needed / left, then the finish time once the pool is full. When the clan moves on, this message switches to the next project.
+- **"Research pool filled"** card in the clan feed, thanking the top 3 donors to that pool, with the research's finish time.
+
+### Changed
+- README screenshots now use the game's real skills, items and research; only the clan, players and numbers are made up.
+
+### Fixed
+- Clan bank, boss and Institute cards weren't posted to a server that picked its channel after its clan was already being tracked, until the data next changed.
+
 ## [1.3.1] - 2026-10-23
 
 ### Fixed

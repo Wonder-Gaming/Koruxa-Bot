@@ -17,8 +17,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from bot.cogs.clan import (
-    Clan, activity_image, bank_image, boss_image, clan_level_card, damage_image, research_done_card,
-    research_started_card,
+    activity_image, bank_image, boss_image, clan_level_card, damage_image, institute_cards, pool_thanks_card,
+    recap_image, research_done_card, research_started_card,
 )
 from bot.cogs.highscores import build_board
 from bot.db import Snapshot
@@ -113,22 +113,22 @@ def boss(out: str) -> None:
 
 def bank(out: str) -> None:
     items = [
-        ("Dragonbone Bow", 3, 18_500_000, "legendary"), ("Moonsilver Bar", 420, 9_240_000, "epic"),
-        ("Elder Logs", 12_800, 6_400_000, "rare"), ("Storm Essence", 950, 4_750_000, "epic"),
-        ("Glimmer Trout", 6_300, 2_520_000, "uncommon"), ("Iron Ore", 25_000, 1_250_000, "common"),
-        ("Healing Brew", 1_400, 1_120_000, "rare"), ("Oak Plank", 9_000, 450_000, "common"),
+        ("Worldtree Log", 2_400, 18_500_000, "epic"), ("Aetherite Rune", 4_200, 9_240_000, "rare"),
+        ("Shalore Bar", 3_100, 6_400_000, "rare"), ("Cinderpine Log", 950, 4_750_000, "epic"),
+        ("Crimsrite Ore", 6_300, 2_520_000, "uncommon"), ("Ironbark Log", 25_000, 1_250_000, "uncommon"),
+        ("Fluxite Rune", 1_400, 1_120_000, "uncommon"), ("Copite Bar", 9_000, 450_000, "common"),
     ]
     log = [
-        ("deposit", "Grindset", "Iron Ore", 2_500, 125_000, 18), ("withdraw", "Pudge", "Healing Brew", 40, 32_000, 41),
-        ("deposit", "Mossy", "Glimmer Trout", 600, 240_000, 75), ("deposit", "Fernwick", "Elder Logs", 1_200, 600_000, 130),
-        ("withdraw", "Mayhem", "Storm Essence", 25, 125_000, 190),
-        ("deposit", "TotoroHero", "Moonsilver Bar", 30, 660_000, 260),
+        ("deposit", "Grindset", "Ironbark Log", 2_500, 125_000, 18), ("withdraw", "Pudge", "Fluxite Rune", 40, 32_000, 41),
+        ("deposit", "Mossy", "Crimsrite Ore", 600, 240_000, 75), ("deposit", "Fernwick", "Worldtree Log", 120, 600_000, 130),
+        ("withdraw", "Mayhem", "Cinderpine Log", 25, 125_000, 190),
+        ("deposit", "TotoroHero", "Shalore Bar", 300, 660_000, 260),
     ]
     data = {
         "clan": CLAN, "generated_at": iso(NOW),
         "coins": 48_200_000, "items_value": sum(v for _, _, v, _ in items), "item_count": 58_000,
         "augment_count": 14, "augment_vault_cap": 50, "enchant_queue": [],
-        "requests": [{"character": "Lil Nugget", "item_key": "healing_brew", "name": "Healing Brew", "quantity": 20,
+        "requests": [{"character": "Lil Nugget", "item_key": "fluxite_rune", "name": "Fluxite Rune", "quantity": 20,
                       "value": 16_000, "at": iso(NOW - timedelta(minutes=6))}],
         "tabs": [{"name": "Main"}, {"name": "Gear"}, {"name": "Supplies"}],
         "items": [{"name": n, "quantity": q, "total_value": v, "rarity": r} for n, q, v, r in items],
@@ -148,14 +148,14 @@ def clan_progress(out: str) -> None:
     save(out, "clan-level.png", clan_level_card(data, 11, 12))
 
     node = {
-        "node_key": "gathering_yield", "name": "Bountiful Harvest", "max_level": 10, "bonus_per_level": 0.02,
-        "bonus_now": 0.12, "description": "More resources from every gathering action.",
-        "next": {"target_level": 7, "time_sec": 2 * 86400 + 6 * 3600,
-                 "materials": [{"qty": 4000, "item_name": "Elder Logs"}, {"qty": 250, "item_name": "Moonsilver Bar"}]},
+        "node_key": "clan_shared_knowledge", "name": "Shared Knowledge", "max_level": 25, "bonus_type": "clan_xp",
+        "bonus_per_level": 0.005, "bonus_now": 0.06, "description": "Every clan member absorbs a little more from the world. +0.5% XP per level for all members.",
+        "next": {"target_level": 13, "time_sec": 9 * 3600 + 40 * 60,
+                 "materials": [{"qty": 52000, "item_name": "Aetherite Rune"}, {"qty": 41000, "item_name": "Basic Log"}]},
     }
-    save(out, "research-complete.png", research_done_card({"clan": CLAN}, node, 6))
+    save(out, "research-complete.png", research_done_card({"clan": CLAN}, node, 12))
     save(out, "research-started.png", research_started_card(
-        {"clan": CLAN, "speed_bonus_pct": 15}, "Bountiful Harvest level 7", node, NOW + timedelta(days=2, hours=6)))
+        {"clan": CLAN, "speed_bonus_pct": 4}, "Shared Knowledge level 13", node, NOW + timedelta(hours=9, minutes=40)))
 
     week = (NOW - timedelta(days=7)).date().isoformat()
     recap = {
@@ -171,7 +171,46 @@ def clan_progress(out: str) -> None:
             ]
         ],
     }
-    save(out, "clan-week.png", Clan.recap_image(recap, NOW.replace(hour=0, minute=0)))
+    save(out, "clan-week.png", recap_image(recap, NOW.replace(hour=0, minute=0)))
+
+
+def institute(out: str) -> None:
+    def mats(*rows):  # (name, filled or None, needed)
+        return [{"item_name": n, "filled": f, "needed": q, "pct": round(100 * (f or 0) / q, 1), "qty": q} for n, f, q in rows]
+
+    nodes = [
+    {"node_key": "clan_shared_knowledge", "name": "Shared Knowledge", "level": 12, "max_level": 25, "bonus_type": "clan_xp", "bonus_per_level": 0.005, "bonus_now": 0.06,
+     "description": "Every clan member absorbs a little more from the world. +0.5% XP per level for all members.", "next": {"target_level": 13, "time_sec": 9 * 3600 + 40 * 60}},
+    {"node_key": "clan_institutional_discipline", "name": "Institutional Discipline", "level": 8, "max_level": 25, "bonus_type": "clan_research_speed", "bonus_per_level": 0.002, "bonus_now": 0.016,
+     "description": "Institute efficiency spreads through the ranks. +0.2% research speed per level for all members.", "next": {"target_level": 9, "time_sec": 6 * 3600}},
+    {"node_key": "clan_collective_power", "name": "Collective Power", "level": 3, "max_level": 25, "bonus_type": "clan_boss_damage_shared", "bonus_per_level": 0.003, "bonus_now": 0.009,
+     "description": "The clan hits harder together. +0.3% clan boss damage per level.", "next": {"target_level": 4, "time_sec": 4 * 3600}},
+    {"node_key": "clan_eternal_flame", "name": "Eternal Flame", "level": 1, "max_level": 2, "bonus_type": "clan_firepit_stage", "bonus_per_level": 1, "bonus_now": 1,
+     "description": "A grand clan project to master the firepit. Level 1 unlocks the Inferno stage (85%+ heat, +8% XP for stokers), level 2 the Wildfire stage (95%+, +10%). Members pool coins and high-tier logs to fuel the research; once the pool is full the timer runs 7 days (level 1) or 14 days (level 2).", "next": {"target_level": 2, "time_sec": 14 * 86400}},
+    {"node_key": "clan_fortune", "name": "Clan Fortune", "level": 0, "max_level": 25, "bonus_type": "clan_drop_rate", "bonus_per_level": 0.003, "bonus_now": 0,
+     "description": "Luck flows through the clan. Each level gives all clan members +0.3% Drop Rate on monster drops and +0.3% Double Drop on all skills (stacks with Fortunes Favor).", "next": {"target_level": 1, "time_sec": 3600}},
+    ]
+    active = {"node_key": "clan_shared_knowledge", "name": "Shared Knowledge", "target_level": 13, "is_paused": False,
+              "pool_full": False, "pool_pct": 83.4, "time_sec": 9 * 3600 + 40 * 60, "time_remaining_sec": 0,
+              "materials": mats(("Aetherite Rune", 52000, 52000), ("Basic Log", 41000, 41000), ("Glowroot", 18700, 24500),
+                                ("Dustite Bar", 7100, 16300), ("Bones", 22900, 30600)),
+              "contributors": [{"name": n, "item_name": i, "qty": q} for n, i, q in (
+                  ("Grindset", "Aetherite Rune", 26000), ("Mossy", "Basic Log", 19000), ("Fernwick", "Glowroot", 14000),
+                  ("Riftbreaker", "Bones", 9100), ("Pudge", "Dustite Bar", 4300), ("Mossy", "Bones", 0))]}
+    data = {
+        "clan": CLAN, "speed_bonus_pct": 4, "nodes": nodes, "active": active,
+        "paused": [{"node_key": "clan_institutional_discipline", "name": "Institutional Discipline", "target_level": 9,
+                    "pool_full": False, "pool_pct": 41.0, "time_remaining_sec": 0,
+                    "materials": mats(("Shalore Bar", 3400, 8100), ("Ironbark Log", 9000, 21600), ("Fluxite Rune", 0, 13500))}],
+        "lifetime_top": [{"name": n, "qty": q} for n, q in (
+            ("Grindset", 482100), ("Mossy", 398700), ("Riftbreaker", 311550), ("Fernwick", 226400), ("TotoroHero", 183200),
+            ("Pudge", 129050), ("Lil Nugget", 81200), ("Mayhem", 55400), ("Grindset_Supreme", 23100), ("Thornwick", 9400))],
+    }
+    for (png, _, _), name in zip(institute_cards(data), ["institute-donors.png", "institute-overview.png",
+                                                          "institute-research.png"]):
+        save(out, name, png)
+    filled = {**active, "pool_full": True, "time_remaining_sec": active["time_sec"]}
+    save(out, "institute-pool-filled.png", pool_thanks_card(data, filled))
 
 
 def save(out: str, name: str, png: bytes | None) -> None:
@@ -185,7 +224,7 @@ def save(out: str, name: str, png: bytes | None) -> None:
 def main() -> None:
     out = sys.argv[1] if len(sys.argv) > 1 else "docs/images"
     os.makedirs(out, exist_ok=True)
-    for step in (highscores, feed, boss, bank, clan_progress):
+    for step in (highscores, feed, boss, bank, clan_progress, institute):
         step(out)
 
 

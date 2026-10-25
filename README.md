@@ -3,9 +3,10 @@
 A self-hosted Discord bot for [Koruxa](https://koruxa.com) clans. It reads the Koruxa Player API to give your server:
 
 - **Clan highscores**: live image boards (Overall, Combat, Gathering, Artisan; the long groups take two boards each) of your linked clan members, edited in place.
-- **Clan feed**: skill level-ups, clan level-ups, Institute research, and weekly recaps / top gainers.
+- **Clan feed**: skill level-ups, clan level-ups, Institute research (started, pool filled, complete), and weekly recaps / top gainers.
 - **Clan boss alerts**: a live boss card with HP and shields, a top-5 damage leaderboard for the current boss, a role ping when a new boss spawns or attempts refresh, and a countdown to the next spawn.
 - **Clan bank**: a live bank summary and the latest deposits, withdrawals and requests.
+- **Clan Institute**: top donors, every research project's level progress, and the current research's material pool (what's donated and what's still missing), plus a thank-you to the top donors when a pool fills.
 - **World boss alerts**: role pings for world boss events.
 - **Personal tools**: profile, XP/h rates with what-if boosts, mastery route planning, XP gains, clan-bank budget.
 
@@ -15,7 +16,7 @@ What's new: see the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
-Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), players and numbers are made up; regenerate them with [`scripts/demo_images.py`](scripts/demo_images.py).
+Every image below is drawn by the bot itself, with the game's real skills, items and research. The clan (*Mossy Hollow [MOSS]*), players and numbers are made up; regenerate them with [`scripts/demo_images.py`](scripts/demo_images.py).
 
 | Clan highscores | Skill boards (Combat and Artisan take two boards each) |
 |---|---|
@@ -28,6 +29,10 @@ Every image below is drawn by the bot itself. The clan (*Mossy Hollow [MOSS]*), 
 | ![Level-ups](docs/images/level-ups.png) | ![Weekly top gainers](docs/images/top-gainers.png) |
 | **Weekly clan recap** | **Clan level-up** |
 | ![Weekly clan recap](docs/images/clan-week.png) | ![Clan level up](docs/images/clan-level.png) |
+| **Institute: top donors** | **Institute: every project's progress** |
+| ![Top Institute donors](docs/images/institute-donors.png) | ![Institute overview](docs/images/institute-overview.png) |
+| **Institute: current research** (donated / needed / left) | **Research pool filled** (clan feed) |
+| ![Current research](docs/images/institute-research.png) | ![Research pool filled](docs/images/institute-pool-filled.png) |
 
 ---
 
@@ -142,6 +147,7 @@ A suggested layout (any names work):
 | `#clan-feed` | Clan Feed |
 | `#boss-alerts` | World Boss and Clan Boss |
 | `#clan-bank` | Clan Bank |
+| `#clan-institute` | Clan Institute |
 
 Make sure the bot's role can view and post in them.
 
@@ -155,6 +161,7 @@ Run `/setchannel` once per feature:
 /setchannel feature:Clan Boss       channel:#boss-alerts
 /setchannel feature:World Boss      channel:#boss-alerts
 /setchannel feature:Clan Bank       channel:#clan-bank
+/setchannel feature:Clan Institute  channel:#clan-institute
 /setchannel feature:Help Menu       channel:#koruxa-bot
 ```
 
