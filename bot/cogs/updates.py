@@ -4,7 +4,8 @@ The version is the newest "## [x.y.z]" heading in CHANGELOG.md. On startup it is
 announced (bot_state "patch_notes"); a new one is posted to each server's Bot Updates channel, or its Help
 Menu channel if it has none, and deleted again after POST_HOURS. Deletion is tracked in bot_state, so it
 still happens after a restart. The very first run only records the current version, so installing the bot
-doesn't post old notes.
+doesn't post old notes. Only major and minor releases are posted (1.5.0 -> 1.6.0); a patch release (1.5.0 ->
+1.5.1) is recorded quietly.
 """
 
 from __future__ import annotations
@@ -40,6 +41,12 @@ def latest_release(path: str = CHANGELOG) -> tuple[str, str, str] | None:
     first = heads[0]
     end = heads[1].start() if len(heads) > 1 else len(text)
     return first.group(1), first.group(2) or "", text[first.end():end].strip()
+
+
+def release_line(version: str) -> tuple[int, ...]:
+    """(major, minor) of "1.5.1", for telling feature releases from patch fixes."""
+    parts = [int(p) for p in re.findall(r"\d+", version)[:2]]
+    return tuple(parts + [0] * (2 - len(parts)))
 
 
 def notes_embed(version: str, date: str, notes: str, delete_at: datetime) -> discord.Embed:
@@ -89,6 +96,8 @@ class Updates(commands.Cog):
         posts = state.get("posts") or []
         if state.get("version") is None:
             log.info("Patch notes: first run, recording v%s without posting", version)
+        elif release_line(version) == release_line(state["version"]):
+            log.info("Patch notes: v%s is a patch release, recording it without posting", version)
         else:
             delete_at = datetime.now(timezone.utc) + timedelta(hours=POST_HOURS)
             embed = notes_embed(version, date, notes, delete_at)

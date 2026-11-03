@@ -2,6 +2,12 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.5.1] - 2026-11-03
+
+### Changed
+- `/bossupgrades`: the upgrade caps (Precision 40, Rage 15, Devastation 20, Crit 25, Time 30; Damage and Power uncapped) are confirmed in game, so the footer no longer lists them as estimates.
+- Patch notes are only posted in Discord for feature releases (e.g. 1.5 → 1.6). Small fixes like this one update quietly.
+
 ## [1.5.0] - 2026-11-03
 
 ### Added

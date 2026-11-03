@@ -380,8 +380,8 @@ def boss_upgrades_embed(name: str, me: dict[str, Any], scrolls: int | None) -> d
     if done := bossmath.maxed(u):
         embed.add_field(name="Maxed", inline=False, value=" · ".join(
             f"{bossmath.EMOJI[m]} {bossmath.LABELS[m]} {getattr(u, m)}" for m in done))
-    embed.set_footer(text="Max hit and Power match the game exactly. Crit, rage, costs and the "
-                          "Time/Devastation/Rage caps are estimates.")
+    embed.set_footer(text="Max hit, Power and the level caps match the game. Crit damage, rage and the "
+                          "other upgrades' scroll costs are estimates.")
     return embed
 
 

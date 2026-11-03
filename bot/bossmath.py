@@ -11,8 +11,8 @@
   (the game's own old estimate for Expert Tier decks).
 - Scroll cost of level n: Damage 5n, Time 8n, Crit 8n, Devastation 12n, Rage 12n, Precision 25n (from a
   community calculator), Power 12n with x3 from 51, x8 from 71, x20 from 91 (wiki).
-- Caps: Crit 25 and Precision 40 (wiki); Time 30, Devastation 20, Rage 15 (the highest level any linked
-  player has, many sit exactly there).
+- Caps (confirmed in game, Nov 2026): Precision 40, Rage 15, Devastation 20, Crit 25, Time 30; Damage and
+  Power have none.
 Damage per scroll compares the upgrades fairly because every factor multiplies the same total.
 """
 
