@@ -13,6 +13,7 @@ RUN pip install -r requirements.txt
 
 COPY assets ./assets
 COPY bot ./bot
+COPY CHANGELOG.md ./
 
 USER bot
 CMD ["python", "-m", "bot"]

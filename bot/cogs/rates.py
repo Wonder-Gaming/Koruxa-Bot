@@ -17,6 +17,7 @@ you own a better cape for the skill, the reply says so, and cape:True swaps the
 worn cape's bonus for the best owned one (checked to match the in-game XP exactly).
 
 /mastery plans the quickest route to a total mastery level (see bot/mastery.py).
+/bossupgrades ranks the clan boss upgrades by damage per scroll (see bot/bossmath.py).
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..fmt import compact, timestamp
+from .. import bossmath
+from ..fmt import compact, num, timestamp
 from .account import CHARACTER_HELP, character_autocomplete
 from ..mastery import MASTERY_GATES, duration_text, plan
 from ..skills import SKILL_SOURCE, skill_label, skill_name
@@ -342,6 +344,47 @@ def fix_unlocks(skill: str, data: dict[str, Any], me: dict[str, Any]) -> None:
             a["unlocked"] = a["level_req"] <= level
 
 
+def boss_upgrades_embed(name: str, me: dict[str, Any], scrolls: int | None) -> discord.Embed:
+    """Which clan boss upgrade gives the most damage per scroll, and a buying plan."""
+    u = bossmath.Upgrades.from_me(me)
+    embed = discord.Embed(
+        title=f"💪 Clan boss upgrades · {name}",
+        description=(f"Max hit **{compact(u.max_hit())}** · about **{compact(u.per_attempt())}** damage per attempt "
+                     f"({30 + u.time} s)"),
+        colour=discord.Colour(0xEF4444),
+    )
+    opts = bossmath.options(u)
+    if opts:
+        embed.add_field(name="Next level, best value first", inline=False, value="\n".join(
+            f"{'⭐' if i == 0 else f'{i + 1}.'} {bossmath.EMOJI[o.upgrade]} **{bossmath.LABELS[o.upgrade]}** "
+            f"{o.level - 1} → {o.level} · {num(o.cost)} scrolls · **+{(o.gain - 1) * 100:.2f}%** damage"
+            for i, o in enumerate(opts)
+        ))
+    p = bossmath.plan(u, budget=scrolls, max_steps=200 if scrolls else 10)
+    if p.steps:
+        runs: list[list] = []  # consecutive buys of the same upgrade, e.g. Power 76 → 78
+        for step in p.steps:
+            if runs and runs[-1][0] == step.upgrade:
+                runs[-1][2] = step.level
+            else:
+                runs.append([step.upgrade, step.level - 1, step.level])
+        lines = [f"{bossmath.EMOJI[up]} {bossmath.LABELS[up]} {a} → {b}" for up, a, b in runs]
+        shown = lines[:12] + ([f"…and {len(lines) - 12} more"] if len(lines) > 12 else [])
+        title = (f"With {num(scrolls)} scrolls" if scrolls else f"Next {len(p.steps)} buys") + \
+            f": {num(p.spent)} scrolls, +{(p.gain - 1) * 100:.0f}% damage"
+        embed.add_field(name=title, value="\n".join(shown)[:1024], inline=False)
+    elif scrolls:
+        embed.add_field(name=f"With {num(scrolls)} scrolls", inline=False,
+                        value=f"Not enough for any upgrade yet: the cheapest costs {num(min(o.cost for o in opts))}."
+                        if opts else "Everything is maxed.")
+    if done := bossmath.maxed(u):
+        embed.add_field(name="Maxed", inline=False, value=" · ".join(
+            f"{bossmath.EMOJI[m]} {bossmath.LABELS[m]} {getattr(u, m)}" for m in done))
+    embed.set_footer(text="Max hit and Power match the game exactly. Crit, rage, costs and the "
+                          "Time/Devastation/Rage caps are estimates.")
+    return embed
+
+
 class Rates(commands.Cog):
     def __init__(self, bot: KoruxaBot):
         self.bot = bot
@@ -436,6 +479,31 @@ class Rates(commands.Cog):
         embed = mastery_embed(skill.value, current, milestones, data)
         embed.title = f"{embed.title} · {linked.name}"
         await interaction.followup.send(embed=embed)
+
+
+    @app_commands.command(name="bossupgrades", description="Which clan boss upgrade gives the most damage per scroll")
+    @app_commands.describe(
+        scrolls="Scrolls you have to spend, for a buying plan (default: the next 10 buys)",
+        character=CHARACTER_HELP,
+        public="Show it to everyone in the channel (default: only you)",
+    )
+    @app_commands.autocomplete(character=character_autocomplete)
+    async def bossupgrades(
+        self,
+        interaction: discord.Interaction,
+        scrolls: app_commands.Range[int, 1, 100_000_000] | None = None,
+        character: str | None = None,
+        public: bool = False,
+    ) -> None:
+        account: Account | None = self.bot.get_cog("Account")  # type: ignore[assignment]
+        linked = await account.resolve(interaction, character) if account else None
+        if linked is None:
+            return
+        await interaction.response.defer(ephemeral=not public, thinking=True)
+        me = await account.fetch_me(interaction, linked)
+        if me is None:
+            return
+        await interaction.followup.send(embed=boss_upgrades_embed(linked.name, me, scrolls))
 
 
 async def setup(bot: KoruxaBot) -> None:

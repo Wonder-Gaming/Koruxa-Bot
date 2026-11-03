@@ -26,6 +26,8 @@ FEATURES: dict[str, Feature] = {
         Feature("clanbank", "Clan Bank", "🏦", "Bank summary, deposits, withdrawals and requests", live=True, clan=True),
         Feature("institute", "Clan Institute", "🏛️", "Top donors and every research project's material pool",
                 live=True, clan=True),
+        Feature("updates", "Bot Updates", "📰", "Patch notes when the bot updates, removed after 12 hours (default: the Help Menu channel)",
+                live=True),
         Feature("enchant", "Enchant Queue", "✨", "Enchant queue updates", live=False),
     ]
 }

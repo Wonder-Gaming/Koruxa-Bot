@@ -142,7 +142,7 @@ A suggested layout (any names work):
 
 | Channel | Used for |
 |---|---|
-| `#koruxa-bot` | Role panel, help menu, and where members run commands |
+| `#koruxa-bot` | Role panel, help menu, patch notes, and where members run commands |
 | `#highscores` | Clan Highscores |
 | `#clan-feed` | Clan Feed |
 | `#boss-alerts` | World Boss and Clan Boss |
@@ -164,6 +164,8 @@ Run `/setchannel` once per feature:
 /setchannel feature:Clan Institute  channel:#clan-institute
 /setchannel feature:Help Menu       channel:#koruxa-bot
 ```
+
+When the bot updates, it posts the patch notes in the Help Menu channel (or a **Bot Updates** channel, if set) and deletes them after 12 hours.
 
 Run `/setchannel` with no channel to turn a feature off. `/alerts` shows the current setup and any permission problems.
 
@@ -225,6 +227,7 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 |---|---|
 | `/rates <skill> [sort] [wells] [buffs] [brew] [extra_speed] [extra_xp] [cape] [character] [public]` | Your best XP per hour for a skill, with optional what-if boosts. `sort`: XP or mastery XP per hour. `cape`: count your best owned cape instead of the one you're wearing |
 | `/mastery <unlock> <skill> [character] [public]` | Quickest route to the total mastery that unlocks a skill's expert actions (3,000 / 3,500 / 4,000, or all three) |
+| `/bossupgrades [scrolls] [character] [public]` | Which clan boss upgrade gives the most damage per scroll next, and a buying plan (for the next 10 buys, or for the scrolls you have) |
 
 ### 📈 Progress
 

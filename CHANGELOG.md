@@ -2,6 +2,12 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.5.0] - 2026-11-03
+
+### Added
+- **`/bossupgrades`**: which clan boss upgrade gives the most damage per scroll next, and a buying plan (the next 10 buys, or `scrolls:` to plan what you have). Max hit and Power match the game exactly; maxed upgrades are listed separately.
+- **Patch notes in Discord**: when the bot updates, it posts what's new in the Help Menu channel (or a new **Bot Updates** channel from `/setchannel`) and deletes it after 12 hours.
+
 ## [1.4.0] - 2026-10-25
 
 ### Added

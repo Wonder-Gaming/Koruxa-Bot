@@ -30,6 +30,7 @@ EXTENSIONS = [
     "bot.cogs.feed",
     "bot.cogs.rates",
     "bot.cogs.clan",
+    "bot.cogs.updates",
 ]
 
 
