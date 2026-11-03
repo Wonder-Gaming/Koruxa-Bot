@@ -74,15 +74,23 @@ async def post_alert(
     return sent
 
 
-async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed) -> None:
-    """Edit each server's live status message for `feature`, posting one where there isn't one yet."""
+async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed | None = None, *,
+                        image: bytes | None = None, filename: str = "image.png") -> None:
+    """Edit each server's live status message for `feature`, posting one where there isn't one yet.
+
+    Pass `image` (PNG bytes) to show a rendered card as the status message instead of an embed; a fresh
+    File is built per server since a File can only be sent once.
+    """
     for cfg in await bot.db.feature_targets(feature):
         channel = bot.get_channel(cfg.channel_id)
         if not isinstance(channel, discord.TextChannel):
             continue
         if cfg.status_message_id:
             try:
-                await channel.get_partial_message(cfg.status_message_id).edit(embed=embed)
+                await channel.get_partial_message(cfg.status_message_id).edit(
+                    embed=embed,
+                    attachments=[discord.File(io.BytesIO(image), filename=filename)] if image else discord.utils.MISSING,
+                )
                 continue
             except discord.NotFound:
                 pass  # deleted: post a new one below
@@ -90,7 +98,11 @@ async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed) -> N
                 log.warning("Couldn't edit %s status in guild %s: %s", feature, cfg.guild_id, e)
                 continue
         try:
-            message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            message = await channel.send(
+                embed=embed,
+                file=discord.File(io.BytesIO(image), filename=filename) if image else discord.utils.MISSING,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         except discord.HTTPException as e:
             log.warning("Couldn't post %s status in guild %s: %s", feature, cfg.guild_id, e)
             continue

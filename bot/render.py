@@ -842,3 +842,83 @@ def render_institute_overview(subtitle: str, rows: list[ResearchRow], footer: st
     _footer(d, footer)
     return _png(img)
 
+
+
+# ---------- world boss card ----------
+
+WB_ACCENT = (168, 85, 247)
+WB_ACTIVE_BG = (46, 38, 70)
+
+
+def _pct(value) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _progress_bar(d: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int, frac: float,
+                  fill: tuple[int, int, int]) -> None:
+    d.rounded_rectangle((x, y, x + w, y + h), h // 2, fill=ROW_SHADE)
+    frac = max(0.0, min(1.0, frac))
+    if frac > 0:
+        fw = max(h, int(w * frac))
+        d.rounded_rectangle((x, y, x + fw, y + h), h // 2, fill=fill)
+
+
+def render_worldboss(event: dict, subtitle: str = "") -> bytes:
+    """A card for a World Boss event: overall progress and a row per phase, the current phase highlighted.
+
+    Phases clear in order; the current one is the first whose progress is below 100%.
+    """
+    phases = [p for p in (event.get("phases") or []) if isinstance(p, dict)]
+    name = str(event.get("name") or "World Boss")
+    total = _pct(event.get("total_progress_pct"))
+    current = next((p.get("phase") for p in phases if _pct(p.get("progress_pct")) < 100), None)
+
+    img, d = _card(WB_ACCENT)
+    _header(img, d, "🌀", name, subtitle, WB_ACCENT)
+    x0, right = PAD + 20, W - PAD - 20
+    y = PAD + HEAD
+
+    bits = [f"Overall {total:g}% cleared"]
+    if isinstance(event.get("participants"), int):
+        bits.append(f"{event['participants']:,} fighters")
+    if isinstance(event.get("strikes_total"), int):
+        bits.append(f"{event['strikes_total']:,} strikes")
+    d.text((x0, y + 6), "    ·    ".join(bits), font=_font(26, "SemiBold"), fill=NAME)
+    y += 48
+    _progress_bar(d, x0, y, right - x0, 18, total / 100, WB_ACCENT)
+    y += 46
+
+    rows = phases or [{}]
+    row_h = min((H - PAD - FOOT - y) // len(rows), 118)
+    for p in rows:
+        pnum = p.get("phase")
+        pname = str(p.get("name") or (f"Phase {pnum}" if pnum is not None else "Phase"))
+        boss = str(p.get("boss") or "")
+        prog = _pct(p.get("progress_pct"))
+        done = prog >= 100
+        active = pnum is not None and pnum == current
+        mid = y + (row_h - 10) // 2
+        if active:
+            d.rounded_rectangle((x0 - 6, y, right + 6, y + row_h - 10), 14, fill=WB_ACTIVE_BG)
+            d.rounded_rectangle((x0 - 6, y, x0 + 2, y + row_h - 10), 4, fill=WB_ACCENT)
+        badge_fill = GREEN if done else (WB_ACCENT if active else FAINT)
+        bx = x0 + 10
+        d.ellipse((bx, mid - 26, bx + 52, mid + 26), fill=badge_fill)
+        d.text((bx + 26, mid), str(pnum if pnum is not None else "?"), font=_font(28, "Bold"),
+               fill=BACKGROUND, anchor="mm")
+        tx = bx + 82
+        d.text((tx, mid - 17), _fit(d, pname, _font(30, "Bold"), 430), font=_font(30, "Bold"),
+               fill=TEXT if not done else NAME, anchor="lm")
+        if boss:
+            d.text((tx, mid + 20), _fit(d, boss, _font(22), 430), font=_font(22), fill=MUTED, anchor="lm")
+        barx = tx + 440
+        barw = right - barx - 180
+        _progress_bar(d, barx, mid - 9, barw, 18, prog / 100, GREEN if done else WB_ACCENT)
+        d.text((right, mid - 20), "cleared" if done else f"{prog:g}%", font=_font(26, "Bold"),
+               fill=GREEN if done else TEXT, anchor="rm")
+        if isinstance(p.get("strikes"), int):
+            d.text((right, mid + 18), f"{p['strikes']:,} strikes", font=_font(20), fill=FAINT, anchor="rm")
+        y += row_h
+
+    _footer(d, "Koruxa World Boss · updates every minute")
+    return _png(img)

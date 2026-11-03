@@ -2,6 +2,15 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.6.0] - 2026-11-04
+
+### Added
+- **World Boss card**: `/worldboss`, the live status message and the alerts now show a rendered card — overall clear progress plus a row per phase, the current phase highlighted, each with its boss, progress bar and strikes.
+
+### Fixed
+- **World Boss phase alerts now fire.** Phase tracking looked for a field the event doesn't carry, so "a new phase opened" pings never triggered. It now follows the event's phase list: when the current phase is cleared, it pings the World Boss role with the next phase and its boss.
+- **Clan level-up card showed the wrong member slots** (e.g. "18 members of 3 slots"). The level curve's member-slots value is a broken constant on the API, so the card no longer shows slots — it shows the member count, max level and clan-XP progress from the fields the API reports reliably.
+
 ## [1.5.2] - 2026-11-03
 
 ### Changed

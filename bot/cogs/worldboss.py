@@ -16,7 +16,9 @@ status message that is edited as the event progresses.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -29,6 +31,7 @@ from discord.ext import commands, tasks
 from ..alerts import post_alert, reset_status, update_status
 from ..api import KoruxaError
 from ..fmt import num, timestamp, title
+from ..render import render_worldboss
 
 if TYPE_CHECKING:
     from ..client import KoruxaBot
@@ -164,6 +167,77 @@ def _embed_fingerprint(embed: discord.Embed) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
+def _pctval(value: Any) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def has_phases(event: dict[str, Any]) -> bool:
+    return bool(isinstance(event.get("phases"), list) and event.get("phases"))
+
+
+def current_phase(event: dict[str, Any]) -> int | None:
+    """The phase being fought: the first whose progress is below 100% (phases clear in order).
+
+    Falls back to the legacy top-level field guessing when there's no `phases` list."""
+    if not has_phases(event):
+        return event_phase(event)
+    pending = [p["phase"] for p in event["phases"]
+               if isinstance(p, dict) and isinstance(p.get("phase"), int) and _pctval(p.get("progress_pct")) < 100]
+    if pending:
+        return min(pending)
+    nums = [p["phase"] for p in event["phases"] if isinstance(p, dict) and isinstance(p.get("phase"), int)]
+    return max(nums) if nums else None
+
+
+def phase_detail(event: dict[str, Any], number: int | None) -> tuple[str | None, str | None]:
+    """(phase name, boss name) for a phase number."""
+    for p in event.get("phases") or []:
+        if isinstance(p, dict) and p.get("phase") == number:
+            return _name(p.get("name")), _name(p.get("boss"))
+    return None, None
+
+
+def _rel(seconds: float | None) -> str:
+    if seconds is None:
+        return "soon"
+    seconds = int(seconds)
+    if seconds <= 0:
+        return "now"
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
+def event_subtitle(event: dict[str, Any], stage: str, now: datetime) -> str:
+    if stage == "upcoming":
+        secs = event.get("seconds_until_start")
+        if not isinstance(secs, (int, float)):
+            start = timestamp(_first(event, START_KEYS))
+            secs = (start - now).total_seconds() if start else None
+        return f"Starts in {_rel(secs)}"
+    if stage == "running":
+        end = timestamp(_first(event, END_KEYS))
+        return f"Live · ends in {_rel((end - now).total_seconds())}" if end else "Live now"
+    return "Event over — claim phase rewards within 14 days"
+
+
+def status_signature(event: dict[str, Any], subtitle: str) -> str:
+    """What the status card shows, so it's only re-rendered/edited when something changed."""
+    return json.dumps({
+        "sub": subtitle,
+        "total": event.get("total_progress_pct"),
+        "participants": event.get("participants"),
+        "strikes_total": event.get("strikes_total"),
+        "phases": [(p.get("phase"), p.get("progress_pct"), p.get("strikes"))
+                   for p in event.get("phases") or [] if isinstance(p, dict)],
+    }, sort_keys=True)
+
+
 # ---------- the cog ----------
 
 class WorldBoss(commands.Cog):
@@ -204,12 +278,18 @@ class WorldBoss(commands.Cog):
                 await self.bot.db.set_state(STATE_KEY, {})
             return
 
-        key, stage, phase = event_key(event), event_stage(event, now), event_phase(event)
-        embed = event_embed(event, data.get("generated_at"))
+        key = event_key(event)
+        stage = event_stage(event, now)
+        phase = current_phase(event)
+        subtitle = event_subtitle(event, stage, now)
+        generated_at = data.get("generated_at")
         new_event = state.get("event_key") != key
 
         if new_event or state.get("stage") != stage or state.get("phase") != phase:
             log.info("World boss event %s: stage=%s phase=%s raw=%s", key, stage, phase, json.dumps(event)[:4000])
+
+        async def card() -> bytes | None:
+            return await asyncio.to_thread(render_worldboss, event, subtitle) if has_phases(event) else None
 
         if new_event:
             await reset_status(self.bot, FEATURE)
@@ -217,50 +297,68 @@ class WorldBoss(commands.Cog):
             state = {"event_key": key, "stage": None, "phase": phase, "reset_date": today}
 
         if stage == "upcoming":
-            await self._post_status(embed)
+            await self._post_status(event, subtitle, generated_at)
         elif stage == "running" and state.get("stage") in (None, "upcoming"):
             sent = await post_alert(
-                self.bot, FEATURE, embed=embed,
+                self.bot, FEATURE, image=await card(), filename="worldboss.png",
+                embed=None if has_phases(event) else event_embed(event, generated_at),
                 content="🌀 **A World Boss event has started!** Go spend your strikes.",
             )
             await reset_status(self.bot, FEATURE, sent)  # the start alert becomes the live status message
-            self._last_status = _embed_fingerprint(embed)
+            self._last_status = status_signature(event, subtitle) if has_phases(event) else None
             state["reset_date"] = today
         elif stage == "running":
             old_phase = state.get("phase")
-            if phase is not None and old_phase is not None and phase != old_phase:
-                await post_alert(
-                    self.bot, FEATURE,
-                    content=f"🌀 **World Boss phase {old_phase} cleared!** Phase {phase} is open."
-                    + (f" Boss: **{boss}**." if (boss := _name(_first(event, BOSS_KEYS))) else ""),
-                )
+            if isinstance(phase, int) and isinstance(old_phase, int) and phase > old_phase:
+                cleared, _ = phase_detail(event, old_phase)
+                name, boss = phase_detail(event, phase)
+                msg = "🌀 **World Boss phase down!**"
+                msg += f" **{cleared}** has fallen —" if cleared else ""
+                msg += f" phase {phase}" + (f" **{name}**" if name else "") + " is now open."
+                msg += f" Boss: **{boss}**." if boss else ""
+                await post_alert(self.bot, FEATURE, image=await card(), filename="worldboss.png", content=msg)
             if state.get("reset_date") != today:
                 await post_alert(
                     self.bot, FEATURE,
                     content="🗡️ **Daily strikes have reset.** Your 3 free World Boss strikes are ready.",
                 )
                 state["reset_date"] = today
-            await self._post_status(embed)
+            await self._post_status(event, subtitle, generated_at)
         elif stage == "ended" and state.get("stage") in ("upcoming", "running"):
-            await self._ended(state, embed)
+            await self._ended(state, event, subtitle, generated_at)
 
         state["stage"], state["phase"] = stage, phase
         await self.bot.db.set_state(STATE_KEY, state)
 
-    async def _post_status(self, embed: discord.Embed) -> None:
+    async def _post_status(self, event: dict[str, Any], subtitle: str, generated_at: Any) -> None:
+        if has_phases(event):
+            sig = status_signature(event, subtitle)
+            if sig == self._last_status:
+                return
+            self._last_status = sig
+            card = await asyncio.to_thread(render_worldboss, event, subtitle)
+            await update_status(self.bot, FEATURE, image=card, filename="worldboss.png")
+            return
+        embed = event_embed(event, generated_at)
         fingerprint = _embed_fingerprint(embed)
         if fingerprint != self._last_status:
-            await update_status(self.bot, FEATURE, embed)
+            await update_status(self.bot, FEATURE, embed=embed)
             self._last_status = fingerprint
 
-    async def _ended(self, state: dict[str, Any], embed: discord.Embed | None = None) -> None:
+    async def _ended(self, state: dict[str, Any], event: dict[str, Any] | None = None,
+                     subtitle: str | None = None, generated_at: Any = None) -> None:
         log.info("World boss event %s ended", state.get("event_key"))
-        final = embed or discord.Embed(
-            title="🌀 World Boss (ended)",
-            description="Event over. Claim phase rewards on the World Boss page within 14 days.",
-            colour=COLOUR,
-        )
-        await update_status(self.bot, FEATURE, final)
+        if event and has_phases(event):
+            card = await asyncio.to_thread(render_worldboss, event,
+                                           subtitle or "Event over — claim phase rewards within 14 days")
+            await update_status(self.bot, FEATURE, image=card, filename="worldboss.png")
+        else:
+            final = event_embed(event, generated_at) if event else discord.Embed(
+                title="🌀 World Boss (ended)",
+                description="Event over. Claim phase rewards on the World Boss page within 14 days.",
+                colour=COLOUR,
+            )
+            await update_status(self.bot, FEATURE, embed=final)
         await post_alert(
             self.bot, FEATURE, ping=False,
             content="🌀 The World Boss event has ended. Claim your phase rewards on the World Boss page within 14 days.",
@@ -280,7 +378,13 @@ class WorldBoss(commands.Cog):
             return
         event = data.get("event")
         if isinstance(event, dict) and event:
-            await interaction.followup.send(embed=event_embed(event, data.get("generated_at")))
+            now = datetime.now(timezone.utc)
+            subtitle = event_subtitle(event, event_stage(event, now), now)
+            if has_phases(event):
+                card = await asyncio.to_thread(render_worldboss, event, subtitle)
+                await interaction.followup.send(file=discord.File(io.BytesIO(card), filename="worldboss.png"))
+            else:
+                await interaction.followup.send(embed=event_embed(event, data.get("generated_at")))
         else:
             await interaction.followup.send(
                 "🌀 No World Boss event is running right now. I check every minute and post an alert when one starts."

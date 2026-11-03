@@ -142,8 +142,8 @@ def bank(out: str) -> None:
 def clan_progress(out: str) -> None:
     data = {
         "clan": CLAN,
-        "xp": {"level": 12, "xp_total": 84_300_000, "xp_to_next": 9_700_000, "progress_pct": 3, "max_level": 50},
-        "levels": [{"level": 11, "max_members": 20}, {"level": 12, "max_members": 22}],
+        "xp": {"level": 12, "xp_total": 84_300_000, "xp_to_next": 9_700_000, "xp_current": 300_000,
+               "progress_pct": 3, "max_level": 50},
     }
     save(out, "clan-level.png", clan_level_card(data, 11, 12))
 

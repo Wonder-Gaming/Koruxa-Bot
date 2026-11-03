@@ -444,26 +444,26 @@ BLUE_RGB, PURPLE_RGB, GREEN_RGB = (96, 165, 250), (168, 85, 247), (34, 197, 94)
 
 
 def clan_level_card(data: dict[str, Any], old: int, level: int) -> bytes:
+    # The level curve's `max_members` is a broken placeholder on the API (a constant 3 at every level), so
+    # we don't show member slots at all — only numbers the API reports reliably.
     xp = data.get("xp") or {}
-    levels = {lv.get("level"): lv for lv in data.get("levels") or [] if isinstance(lv, dict)}
-    members = (levels.get(level) or {}).get("max_members")
-    before = (levels.get(old) or {}).get("max_members")
     count = (data.get("clan") or {}).get("member_count")
+    max_level = xp.get("max_level")
     pct = xp.get("progress_pct")
     stats = [
-        ("👥", "Member slots", f"{num(members)}" + (f"  (+{members - before})" if isinstance(members, int)
-                                                   and isinstance(before, int) and members > before else "")),
         ("📈", "Total clan XP", compact(xp.get("xp_total"))),
         ("⭐", "XP to next level", compact(xp.get("xp_to_next")) if xp.get("xp_to_next") else "Max level"),
+        ("✨", "XP this level", compact(xp.get("xp_current"))),
     ]
     progress = None
     if isinstance(pct, (int, float)) and xp.get("xp_to_next"):
         progress = (pct / 100, f"Progress to level {level + 1}", f"{pct:g}%")
+    members = f"{num(count)} member{'s' if count != 1 else ''}" if isinstance(count, int) else ""
+    detail = members + (f" · max level {max_level}" if max_level else "")
     return render_announcement(Announcement(
         "🏰", BLUE_RGB, "Clan level up!", clan_name(data),
         f"Level {old}  →  {level}",
-        f"{num(count)} member{'s' if count != 1 else ''}" + (f" of {num(members)} slots" if members else "")
-        + (f" · max level {xp['max_level']}" if xp.get("max_level") else ""),
+        detail,
         stats, progress,
         f"{datetime.now(timezone.utc):%d %b %Y %H:%M} UTC",
     ))
@@ -1149,9 +1149,7 @@ class ClanTracker:
         old = state.get("level")
         if isinstance(old, int) and level > old:
             log.info("%s levelled %s -> %s", self.name, old, level)
-            # The default answer leaves out part of the level curve; member slots come from it.
-            full = await self.fetch("clan-xp", {"curve": "1"}) or data
-            png = await asyncio.to_thread(clan_level_card, full, old, level)
+            png = await asyncio.to_thread(clan_level_card, data, old, level)
             await self.post("feed", image=png, filename="clan-level.png", ping=False)
         await self.bot.db.set_state(self.key("clan_xp"), {"level": level})
 
