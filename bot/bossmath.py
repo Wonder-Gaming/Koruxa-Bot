@@ -6,11 +6,12 @@
   used the old x1.24) and the Power cost steps.
 - Each hit rolls between the minimum (Precision % of the max hit) and the max hit, one hit per second for
   30 + Time seconds.
-- Crit: Crit % chance (max 25, per the wiki), crits deal x(1.5 + 0.15 x Devastation).
-- Rage: builds up during a fight to a cap of 10% + 5% per Rage level; counted at 75% of the cap on average
-  (the game's own old estimate for Expert Tier decks).
-- Scroll cost of level n: Damage 5n, Time 8n, Crit 8n, Devastation 12n, Rage 12n, Precision 25n (from a
-  community calculator), Power 12n with x3 from 51, x8 from 71, x20 from 91 (wiki).
+- Crit: Crit % chance (max 25, per the wiki), crits deal x(1.5 + 0.15 x Devastation). The +0.15 per level
+  is confirmed in game (Devastation 20 shows x3); the x1.5 base is the community calculator's.
+- Rage: builds up during a fight to a cap of 5 per Rage level, +1% damage per point (confirmed in game: Rage
+  15 shows +75); counted at 75% of the cap on average (the game's own old estimate for Expert Tier decks).
+- Scroll cost of level n: Damage 5n and Precision 25n (confirmed in game), Time 8n, Crit 8n, Devastation 12n,
+  Rage 12n (community calculator), Power 12n with x3 from 51, x8 from 71, x20 from 91 (wiki).
 - Caps (confirmed in game, Nov 2026): Precision 40, Rage 15, Devastation 20, Crit 25, Time 30; Damage and
   Power have none.
 Damage per scroll compares the upgrades fairly because every factor multiplies the same total.
@@ -53,7 +54,7 @@ class Upgrades:
         """Expected damage of one attempt. `bonus`: other % damage bonuses as a fraction (e.g. research)."""
         avg_roll = (1 + min(self.precision, 100) / 100) / 2
         crit = 1 + min(self.crit, 100) / 100 * (1.5 + 0.15 * self.devastation - 1)
-        rage = 1 + RAGE_AVERAGE * (0.10 + 0.05 * self.rage)
+        rage = 1 + RAGE_AVERAGE * 0.05 * self.rage
         return self.max_hit() * avg_roll * crit * rage * (1 + bonus) * (30 + self.time)
 
     def cost(self, upgrade: str) -> int | None:

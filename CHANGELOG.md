@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.5.2] - 2026-11-03
+
+### Changed
+- `/bossupgrades` uses more values confirmed in game: Damage costs 5 and Precision 25 scrolls per level, Devastation adds ×0.15 crit damage per level, and Rage adds 5 rage cap per level (no extra base). The damage-per-attempt estimate drops a little; the upgrade ranking is unchanged.
+
 ## [1.5.1] - 2026-11-03
 
 ### Changed
