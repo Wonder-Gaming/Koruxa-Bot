@@ -505,6 +505,103 @@ class Rates(commands.Cog):
             return
         await interaction.followup.send(embed=boss_upgrades_embed(linked.name, me, scrolls))
 
+    @app_commands.command(name="gearcheck",
+                          description="Tool slots where a higher-tier tool is available for your skill level")
+    @app_commands.describe(
+        character=CHARACTER_HELP,
+        public="Show it to everyone in the channel (default: only you)",
+    )
+    @app_commands.autocomplete(character=character_autocomplete)
+    async def gearcheck(
+        self,
+        interaction: discord.Interaction,
+        character: str | None = None,
+        public: bool = False,
+    ) -> None:
+        account: Account | None = self.bot.get_cog("Account")  # type: ignore[assignment]
+        linked = await account.resolve(interaction, character) if account else None
+        if linked is None:
+            return
+        await interaction.response.defer(ephemeral=not public, thinking=True)
+        me = await account.fetch_me(interaction, linked)
+        if me is None:
+            return
+        await interaction.followup.send(embed=gearcheck_embed(linked.name, me))
+
+
+# Tool material tiers and the skill level each needs (from the in-game shop). Materials are universal across
+# tool types, so the best tool for a skill is the highest tier at or below that skill's level. Magic wands
+# (Nexus 90, Nether 105, …) use a separate ladder and are left out.
+TOOL_TIERS = [
+    (1, "Dustite"), (5, "Copite"), (15, "Velorite"), (25, "Crimsrite"), (40, "Shalore"),
+    (55, "Noctite"), (70, "Auorite"), (95, "Zephyne"), (110, "Korunite"), (120, "Drakonite"),
+    (135, "Pyrethium"),
+]
+# Tools on a different (wand) ladder we don't map, so they're skipped.
+WAND_SKILLS = ("magic", "arcana", "alchemy")
+# Skills the shop clearly sells a gathering/artisan tool for (used for the "no tool equipped" check).
+TOOL_SKILLS = ("woodcutting", "mining", "fishing", "firemaking", "cooking", "smithing",
+               "fletching", "herblore", "crafting", "farming", "thieving", "construction")
+
+
+def best_tool_tier(level: int) -> tuple[int, str] | None:
+    """The highest (required level, material) at or below `level`."""
+    best = None
+    for req, material in TOOL_TIERS:
+        if req <= level:
+            best = (req, material)
+        else:
+            break
+    return best
+
+
+def gearcheck_embed(name: str, me: dict[str, Any]) -> discord.Embed:
+    skills = {str(s.get("skill_key")).lower(): int(s.get("level") or 0)
+              for s in me.get("skills") or [] if isinstance(s, dict) and s.get("skill_key")}
+    equipped = {str(it["slot"])[5:]: it for it in me.get("equipment") or []
+                if isinstance(it, dict) and str(it.get("slot", "")).startswith("tool_")}
+
+    upgrades: list[str] = []
+    missing: list[str] = []
+    fine: list[str] = []
+    seen = set()
+    for skill, it in equipped.items():
+        seen.add(skill)
+        if skill in WAND_SKILLS:  # wands use a different ladder
+            continue
+        level = skills.get(SKILL_SOURCE.get(skill, skill), skills.get(skill, 0))
+        best = best_tool_tier(level)
+        req = int(it.get("required_level") or 0)
+        iname = str(it.get("name") or it.get("item_key") or "tool")
+        # tool type = words after the material, dropping enchant marks like "+5" and style icons
+        ttype = " ".join(w for w in iname.split()[1:] if w.isalpha()) or "tool"
+        if best and best[0] > req:
+            upgrades.append(f"⬆️ **{skill_name(skill)}** (Lv {level}) — {iname} only needs Lv {req}. "
+                            f"Upgrade to **{best[1]} {ttype}** (Lv {best[0]}).")
+        else:
+            fine.append(f"✅ **{skill_name(skill)}** — {iname} (Lv {req})")
+
+    for skill in TOOL_SKILLS:
+        if skill in seen:
+            continue
+        level = skills.get(skill, 0)
+        best = best_tool_tier(level)
+        if level and best:
+            missing.append(f"❔ **{skill_name(skill)}** (Lv {level}) — no tool equipped. "
+                           f"You can use up to the **{best[1]}** tier (Lv {best[0]}).")
+
+    lines = upgrades + missing + fine
+    header = (f"**{len(upgrades)} tool{'s' if len(upgrades) != 1 else ''} to upgrade"
+              + (f", {len(missing)} slot{'s' if len(missing) != 1 else ''} empty**\n" if missing else "**\n")) \
+        if (upgrades or missing) else "**Everything's up to date.**\n"
+    embed = discord.Embed(
+        title=f"🛠️ Gear check · {name}",
+        description=(header + "\n".join(lines))[:4000] if lines else "No gathering/artisan tools found.",
+        colour=discord.Colour.orange() if (upgrades or missing) else discord.Colour.green(),
+    )
+    embed.set_footer(text="Tiers from the shop ladder · magic wands use a separate ladder")
+    return embed
+
 
 async def setup(bot: KoruxaBot) -> None:
     await bot.add_cog(Rates(bot))

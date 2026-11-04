@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.7.0] - 2026-11-04
+
+### Added
+- **`/gearcheck`**: compares your equipped gathering/artisan tools to your skill levels and flags where a higher tier is available — e.g. "Firemaking 45: Dustite Tinderbox (Lv 1) → upgrade to **Shalore Tinderbox** (Lv 40)". It also points out tool slots you've left empty. Magic wands use a separate tier ladder and are skipped for now.
+
 ## [1.6.1] - 2026-11-04
 
 ### Fixed
