@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.8.1] - 2026-11-04
+
+### Fixed
+- `/topmastery file:True` crashed with a missing-import error; the text-file option works now.
+
 ## [1.8.0] - 2026-11-04
 
 ### Added

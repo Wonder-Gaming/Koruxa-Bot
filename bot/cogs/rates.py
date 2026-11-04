@@ -22,6 +22,7 @@ worn cape's bonus for the best owned one (checked to match the in-game XP exactl
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
