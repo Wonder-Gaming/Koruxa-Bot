@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.7.2] - 2026-11-04
+
+### Changed
+- `/gearcheck` now covers **Arcana and Alchemy** (wands & athames, on their own tier ladder), adds the missing **Vexite (Lv 85)** gathering tier, puts a skill emoji next to each skill, and lists **only the tools that need upgrading or are missing** (with a count of how many are already optimal).
+
 ## [1.7.1] - 2026-11-04
 
 ### Fixed
