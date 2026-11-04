@@ -509,6 +509,10 @@ class Rates(commands.Cog):
     @app_commands.command(name="topmastery",
                           description="Your fastest actions to master, ranked by mastery XP per hour")
     @app_commands.describe(
+        wells="Count Donation Well speed boosts (default: on)",
+        buffs="Count your active personal speed buffs (default: on)",
+        brew="Count the Daily Brew speed boost (default: off)",
+        extra_speed="Model extra % speed on top, e.g. a boost the API doesn't report (0–300)",
         file="Attach a text file with the top 50 instead of showing the top 30 in chat",
         character=CHARACTER_HELP,
         public="Show it to everyone in the channel (default: only you)",
@@ -517,6 +521,10 @@ class Rates(commands.Cog):
     async def topmastery(
         self,
         interaction: discord.Interaction,
+        wells: bool = True,
+        buffs: bool = True,
+        brew: bool = False,
+        extra_speed: app_commands.Range[int, 0, 300] = 0,
         file: bool = False,
         character: str | None = None,
         public: bool = False,
@@ -533,16 +541,19 @@ class Rates(commands.Cog):
         if me is None:
             return
         apply_unlock_fix(data, me)
-        rows = top_mastery_rows(data)
+        boosts = read_boosts(me)
+        scenario = Scenario(wells, buffs, brew, extra_speed, 0)  # mastery XP/h depends on speed only
+        rows = top_mastery_rows(data, boosts, scenario)
         if file:
-            text = top_mastery_text(linked.name, rows[:TOP_FILE])
+            text = top_mastery_text(linked.name, rows[:TOP_FILE], scenario)
             upload = discord.File(io.BytesIO(text.encode()), filename=f"top-mastery-{linked.name}.txt")
             await interaction.followup.send(
                 content=f"📘 Top {min(TOP_FILE, len(rows))} actions by mastery XP/h for **{linked.name}** "
                         f"(of {len(rows)} unlocked) — attached.",
                 file=upload)
         else:
-            await interaction.followup.send(embed=top_mastery_embed(linked.name, rows, data.get("generated_at")))
+            await interaction.followup.send(
+                embed=top_mastery_embed(linked.name, rows, data.get("generated_at"), boosts, scenario))
 
     @app_commands.command(name="gearcheck",
                           description="Tool slots where a higher-tier tool is available for your skill level")
@@ -670,13 +681,16 @@ def apply_unlock_fix(data: dict[str, Any], me: dict[str, Any]) -> None:
             a["unlocked"] = a["level_req"] <= levels.get(source, 0)
 
 
-def top_mastery_rows(data: dict[str, Any]) -> list[tuple[dict[str, Any], float, float]]:
-    """Unlocked actions as (action, duration ms, mastery XP/h), best mastery XP/h first."""
+def top_mastery_rows(data: dict[str, Any], boosts: Boosts, scenario: Scenario) \
+        -> list[tuple[dict[str, Any], float, float]]:
+    """Unlocked actions as (action, duration ms, mastery XP/h) under `scenario`, best mastery XP/h first.
+    Mastery XP per cycle is fixed; only the action's speed (duration) changes with buffs, so XP boosts
+    are irrelevant here — only the speed ones move the ranking."""
     rows = []
     for a in data.get("actions") or []:
         if not isinstance(a, dict) or not a.get("unlocked"):
             continue
-        duration = _num(a.get("duration_ms"))
+        duration, _, _ = simulate(a, boosts, scenario)  # same speed model as /rates; no cape (cross-skill)
         rate = _per_hour(_num(a.get("mastery_xp_per_cycle")), duration)
         if rate > 0:
             rows.append((a, duration, rate))
@@ -684,7 +698,8 @@ def top_mastery_rows(data: dict[str, Any]) -> list[tuple[dict[str, Any], float, 
     return rows
 
 
-def top_mastery_embed(name: str, rows: list, generated_at: Any) -> discord.Embed:
+def top_mastery_embed(name: str, rows: list, generated_at: Any, boosts: Boosts, scenario: Scenario) \
+        -> discord.Embed:
     shown = rows[:TOP_EMBED]
     lines = [
         f"**{i}.** {skill_emoji(a.get('skill'))} **{a.get('label', a.get('action', '?'))}** · "
@@ -693,16 +708,28 @@ def top_mastery_embed(name: str, rows: list, generated_at: Any) -> discord.Embed
     ]
     return discord.Embed(
         title=f"📘 Fastest to master · {name}",
-        description=(f"Your unlocked actions by mastery XP per hour (current gear). Top {len(shown)} of "
-                     f"{len(rows)} — add `file:True` for the top {TOP_FILE} as a text file.\n\n"
+        description=(scenario_line(boosts, scenario) + "\n"
+                     + f"Unlocked actions by mastery XP per hour (speed only — XP boosts don't affect mastery). "
+                     f"Top {len(shown)} of {len(rows)} — add `file:True` for the top {TOP_FILE} as a text file.\n\n"
                      + ("\n".join(lines) or "No unlocked actions."))[:4096],
         colour=discord.Colour.orange(),
         timestamp=timestamp(generated_at),
     )
 
 
-def top_mastery_text(name: str, rows: list) -> str:
-    out = [f"Top {len(rows)} actions by mastery XP/hour — {name} (current gear)", "",
+def _scenario_plain(scenario: Scenario) -> str:
+    if scenario.is_current:
+        return "as now (active wells + personal buffs)"
+    parts = [f"wells {'on' if scenario.wells else 'off'}", f"buffs {'on' if scenario.potions else 'off'}",
+             f"brew {'on' if scenario.brew else 'off'}"]
+    if scenario.extra_speed:
+        parts.append(f"+{scenario.extra_speed}% speed")
+    return ", ".join(parts)
+
+
+def top_mastery_text(name: str, rows: list, scenario: Scenario) -> str:
+    out = [f"Top {len(rows)} actions by mastery XP/hour — {name}",
+           f"Speed scenario: {_scenario_plain(scenario)}", "",
            f"{'#':>3}  {'Skill':<12}  {'Action':<26}  {'Lv':>3}  {'Time':>6}  {'Mastery/h':>10}  {'XP/h':>9}",
            "-" * 82]
     for i, (a, duration, rate) in enumerate(rows, 1):

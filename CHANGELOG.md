@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.8.2] - 2026-11-04
+
+### Changed
+- `/topmastery` now takes the same speed what-if options as `/rates` — `wells`, `buffs`, `brew` and `extra_speed` — and shows the scenario on the result. Mastery XP/hour depends on action speed only, so XP boosts are left out.
+
 ## [1.8.1] - 2026-11-04
 
 ### Fixed
