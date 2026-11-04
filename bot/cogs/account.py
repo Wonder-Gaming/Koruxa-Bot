@@ -1,4 +1,4 @@
-"""/link, /unlink, /characters, /profile and /budget: a user's own Koruxa characters (up to 4)."""
+"""/link, /unlink, /characters, /profile and /budget: a user's own Koruxa characters (up to 5)."""
 
 from __future__ import annotations
 

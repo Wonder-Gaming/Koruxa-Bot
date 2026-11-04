@@ -203,7 +203,7 @@ Each member runs:
 /link
 ```
 
-and pastes their **Player API token** (in game: **Settings → Account → API access → New token**, starts with `kxu_`). Up to 4 characters per Discord user. Tokens are stored encrypted and only read that player's own data. `/unlink` removes a character and deletes its token.
+and pastes their **Player API token** (in game: **Settings → Account → API access → New token**, starts with `kxu_`). Up to 5 characters per Discord user. Tokens are stored encrypted and only read that player's own data. `/unlink` removes a character and deletes its token.
 
 Linked characters in the clan appear on the highscores at the next refresh (every 15 minutes by default).
 
@@ -215,7 +215,7 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 
 | Command | What it does |
 |---|---|
-| `/link` | Link a Koruxa character with its Player API token (up to 4) |
+| `/link` | Link a Koruxa character with its Player API token (up to 5) |
 | `/unlink [character]` | Remove a linked character and delete its stored token |
 | `/characters` | List your linked characters |
 | `/profile [character] [public]` | Show your Koruxa profile |

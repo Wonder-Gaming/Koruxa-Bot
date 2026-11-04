@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.9.0] - 2026-11-04
+
+### Changed
+- You can now link **up to 5 characters** per Discord user (was 4), matching the game's new character slot.
+
 ## [1.8.2] - 2026-11-04
 
 ### Changed

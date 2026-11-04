@@ -1,6 +1,6 @@
 """SQLite storage, kept in the data directory (the container's only volume).
 
-Players can have up to 4 characters, so tokens and everything tracked are kept
+Players can have up to 5 characters, so tokens and everything tracked are kept
 per character: links (discord user + character), snapshots, XP history and
 announced levels are keyed by the game's character id.
 """
@@ -17,10 +17,10 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-MAX_CHARACTERS = 4
+MAX_CHARACTERS = 5
 
 SCHEMA = """
--- One row per linked character. A Discord user can link up to 4.
+-- One row per linked character. A Discord user can link up to 5.
 CREATE TABLE IF NOT EXISTS links (
     discord_id   INTEGER NOT NULL,
     character_id INTEGER NOT NULL,
