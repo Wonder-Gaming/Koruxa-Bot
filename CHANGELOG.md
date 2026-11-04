@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.8.0] - 2026-11-04
+
+### Added
+- **`/topmastery`**: your unlocked actions across every skill ranked by mastery XP per hour (fastest to master) — the top 30 in chat, or `file:True` for the top 50 as a text file.
+
 ## [1.7.2] - 2026-11-04
 
 ### Changed
