@@ -288,47 +288,60 @@ class WorldBoss(commands.Cog):
         if new_event or state.get("stage") != stage or state.get("phase") != phase:
             log.info("World boss event %s: stage=%s phase=%s raw=%s", key, stage, phase, json.dumps(event)[:4000])
 
-        async def card() -> bytes | None:
-            return await asyncio.to_thread(render_worldboss, event, subtitle) if has_phases(event) else None
-
         if new_event:
+            await self._clear_pings(state)
             await reset_status(self.bot, FEATURE)
             self._last_status = None
-            state = {"event_key": key, "stage": None, "phase": phase, "reset_date": today}
+            state = {"event_key": key, "stage": None, "phase": phase, "reset_date": today, "pings": {}}
 
-        if stage == "upcoming":
+        # One status card for the whole event, edited in place (it pops when the card first appears and then
+        # transitions upcoming -> live -> ended on the same message). Phase changes etc. are separate role
+        # pings that clear themselves, like the clan boss attack pings.
+        if stage in ("upcoming", "running"):
             await self._post_status(event, subtitle, generated_at)
-        elif stage == "running" and state.get("stage") in (None, "upcoming"):
-            sent = await post_alert(
-                self.bot, FEATURE, image=await card(), filename="worldboss.png",
-                embed=None if has_phases(event) else event_embed(event, generated_at),
-                content="🌀 **A World Boss event has started!** Go spend your strikes.",
-            )
-            await reset_status(self.bot, FEATURE, sent)  # the start alert becomes the live status message
-            self._last_status = status_signature(event, subtitle) if has_phases(event) else None
-            state["reset_date"] = today
-        elif stage == "running":
+
+        if stage == "running":
             old_phase = state.get("phase")
-            if isinstance(phase, int) and isinstance(old_phase, int) and phase > old_phase:
+            if state.get("stage") in (None, "upcoming"):
+                state["reset_date"] = today
+                await self._ping(state, "🌀 **A World Boss event has started!** Go spend your strikes.")
+            elif isinstance(phase, int) and isinstance(old_phase, int) and phase > old_phase:
                 cleared, _ = phase_detail(event, old_phase)
                 name, boss = phase_detail(event, phase)
                 msg = "🌀 **World Boss phase down!**"
                 msg += f" **{cleared}** has fallen —" if cleared else ""
                 msg += f" phase {phase}" + (f" **{name}**" if name else "") + " is now open."
                 msg += f" Boss: **{boss}**." if boss else ""
-                await post_alert(self.bot, FEATURE, image=await card(), filename="worldboss.png", content=msg)
+                await self._ping(state, msg)
             if state.get("reset_date") != today:
-                await post_alert(
-                    self.bot, FEATURE,
-                    content="🗡️ **Daily strikes have reset.** Your 3 free World Boss strikes are ready.",
-                )
                 state["reset_date"] = today
-            await self._post_status(event, subtitle, generated_at)
+                await self._ping(state, "🗡️ **Daily strikes have reset.** Your 3 free World Boss strikes are ready.")
         elif stage == "ended" and state.get("stage") in ("upcoming", "running"):
             await self._ended(state, event, subtitle, generated_at)
 
         state["stage"], state["phase"] = stage, phase
         await self.bot.db.set_state(STATE_KEY, state)
+
+    async def _ping(self, state: dict[str, Any], content: str) -> None:
+        """Post a role-pinging alert, clearing the previous one first (so only the latest ping stays)."""
+        await self._clear_pings(state)
+        sent = await post_alert(self.bot, FEATURE, content=content, ping=True)
+        state["pings"] = {str(guild_id): message.id for guild_id, message in sent.items()}
+
+    async def _clear_pings(self, state: dict[str, Any]) -> None:
+        """Delete the ping messages posted by the previous _ping call."""
+        pings = state.get("pings") or {}
+        if not pings:
+            return
+        for cfg in await self.bot.db.feature_targets(FEATURE):
+            mid = pings.get(str(cfg.guild_id))
+            channel = self.bot.get_channel(cfg.channel_id)
+            if mid and isinstance(channel, discord.TextChannel):
+                try:
+                    await channel.get_partial_message(mid).delete()
+                except discord.HTTPException:
+                    pass
+        state["pings"] = {}
 
     async def _post_status(self, event: dict[str, Any], subtitle: str, generated_at: Any) -> None:
         if has_phases(event):
@@ -348,21 +361,17 @@ class WorldBoss(commands.Cog):
     async def _ended(self, state: dict[str, Any], event: dict[str, Any] | None = None,
                      subtitle: str | None = None, generated_at: Any = None) -> None:
         log.info("World boss event %s ended", state.get("event_key"))
+        await self._clear_pings(state)
         if event and has_phases(event):
+            # Leave the final card in place, flipped to its "ended" subtitle; it stays until the next event.
             card = await asyncio.to_thread(render_worldboss, event,
                                            subtitle or "Event over — claim phase rewards within 14 days")
             await update_status(self.bot, FEATURE, image=card, filename="worldboss.png")
         else:
-            final = event_embed(event, generated_at) if event else discord.Embed(
-                title="🌀 World Boss (ended)",
-                description="Event over. Claim phase rewards on the World Boss page within 14 days.",
-                colour=COLOUR,
+            await post_alert(
+                self.bot, FEATURE, ping=False,
+                content="🌀 The World Boss event has ended. Claim your phase rewards on the World Boss page within 14 days.",
             )
-            await update_status(self.bot, FEATURE, embed=final)
-        await post_alert(
-            self.bot, FEATURE, ping=False,
-            content="🌀 The World Boss event has ended. Claim your phase rewards on the World Boss page within 14 days.",
-        )
         await reset_status(self.bot, FEATURE)
         self._last_status = None
 

@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.6.1] - 2026-11-04
+
+### Fixed
+- **World Boss card now updates in place.** One status card appears for the event and edits itself through upcoming → live → ended, instead of posting a fresh card each time. Phase changes, the event start and the daily strike reset are now separate role pings that clear the previous one (like the clan boss attack pings), rather than extra cards piling up.
+
 ## [1.6.0] - 2026-11-04
 
 ### Added
