@@ -93,7 +93,9 @@ class Updates(commands.Cog):
         state = await self.bot.db.get_state("patch_notes") or {}
         if state.get("version") == version:
             return
-        posts = state.get("posts") or []
+        # Keep earlier releases' still-pending posts so their 12h cleanup still runs, but count only the
+        # ones posted now (the list is pruned by the cleanup loop as each post's delete_at passes).
+        pending = state.get("posts") or []
         if state.get("version") is None:
             log.info("Patch notes: first run, recording v%s without posting", version)
         elif release_line(version) == release_line(state["version"]):
@@ -101,17 +103,19 @@ class Updates(commands.Cog):
         else:
             delete_at = datetime.now(timezone.utc) + timedelta(hours=POST_HOURS)
             embed = notes_embed(version, date, notes, delete_at)
+            new_posts = []
             for channel in await self.channels():
                 try:
                     message = await channel.send(
                         content=f"Deletes {discord.utils.format_dt(delete_at, 'R')}",
                         embed=embed, allowed_mentions=discord.AllowedMentions.none())
-                    posts.append({"channel_id": channel.id, "message_id": message.id,
-                                  "delete_at": delete_at.isoformat(timespec="seconds")})
+                    new_posts.append({"channel_id": channel.id, "message_id": message.id,
+                                      "delete_at": delete_at.isoformat(timespec="seconds")})
                 except discord.HTTPException as e:
                     log.warning("Couldn't post patch notes in guild %s: %s", channel.guild.id, e)
-            log.info("Posted v%s patch notes to %d server(s)", version, len(posts))
-        await self.bot.db.set_state("patch_notes", {"version": version, "posts": posts})
+            log.info("Posted v%s patch notes to %d server(s)", version, len(new_posts))
+            pending = pending + new_posts
+        await self.bot.db.set_state("patch_notes", {"version": version, "posts": pending})
 
     @tasks.loop(minutes=10)
     async def cleanup(self) -> None:

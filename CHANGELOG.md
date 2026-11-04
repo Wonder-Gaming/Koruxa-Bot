@@ -2,6 +2,11 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.7.1] - 2026-11-04
+
+### Fixed
+- The patch-notes "posted to N server(s)" log counted posts carried over from the previous release, inflating the number (it reported 4 for a 2-server post). It now counts only the posts made for the current release; earlier posts are still kept for their 12-hour cleanup.
+
 ## [1.7.0] - 2026-11-04
 
 ### Added
