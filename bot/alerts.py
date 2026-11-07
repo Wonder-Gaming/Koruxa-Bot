@@ -75,12 +75,14 @@ async def post_alert(
 
 
 async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed | None = None, *,
+                        embeds: list[discord.Embed] | None = None,
                         image: bytes | None = None, filename: str = "image.png") -> None:
     """Edit each server's live status message for `feature`, posting one where there isn't one yet.
 
-    Pass `image` (PNG bytes) to show a rendered card as the status message instead of an embed; a fresh
-    File is built per server since a File can only be sent once.
+    Pass `embeds` for a multi-embed message (e.g. a long command list). Pass `image` (PNG bytes) to show a
+    rendered card instead of an embed; a fresh File is built per server since a File can only be sent once.
     """
+    embed_kw = {"embeds": embeds} if embeds is not None else {"embed": embed}
     for cfg in await bot.db.feature_targets(feature):
         channel = bot.get_channel(cfg.channel_id)
         if not isinstance(channel, discord.TextChannel):
@@ -88,7 +90,7 @@ async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed | Non
         if cfg.status_message_id:
             try:
                 await channel.get_partial_message(cfg.status_message_id).edit(
-                    embed=embed,
+                    **embed_kw,
                     attachments=[discord.File(io.BytesIO(image), filename=filename)] if image else discord.utils.MISSING,
                 )
                 continue
@@ -99,7 +101,7 @@ async def update_status(bot: KoruxaBot, feature: str, embed: discord.Embed | Non
                 continue
         try:
             message = await channel.send(
-                embed=embed,
+                **embed_kw,
                 file=discord.File(io.BytesIO(image), filename=filename) if image else discord.utils.MISSING,
                 allowed_mentions=discord.AllowedMentions.none(),
             )

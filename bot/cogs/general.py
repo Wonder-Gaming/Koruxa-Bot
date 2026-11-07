@@ -40,7 +40,9 @@ def _param_line(p: app_commands.Parameter) -> str:
     return line
 
 
-def help_embed(tree: app_commands.CommandTree, mentions: dict[str, str], is_admin: bool) -> discord.Embed:
+def help_embeds(tree: app_commands.CommandTree, mentions: dict[str, str], is_admin: bool) -> list[discord.Embed]:
+    """The command list, split across as many embeds as Discord's limits need
+    (max 25 fields / 6,000 chars per embed) so it keeps working as commands grow."""
     by_cog: dict[str, list[app_commands.Command]] = {}
     for cmd in tree.get_commands():
         if not isinstance(cmd, app_commands.Command):
@@ -52,28 +54,37 @@ def help_embed(tree: app_commands.CommandTree, mentions: dict[str, str], is_admi
 
     order = [cog for cog, _ in SECTIONS] + sorted(set(by_cog) - {cog for cog, _ in SECTIONS})
     titles = dict(SECTIONS)
-    embed = discord.Embed(
-        title="Koruxa Bot commands",
-        description="Click a command to use it. `<option>` is required, `[option]` is optional.",
-        colour=discord.Colour.orange(),
-    )
+
+    def new_embed(first: bool) -> discord.Embed:
+        return discord.Embed(
+            title="Koruxa Bot commands" if first else "Koruxa Bot commands (continued)",
+            description="Click a command to use it. `<option>` is required, `[option]` is optional." if first else None,
+            colour=discord.Colour.orange())
+
+    def length(e: discord.Embed) -> int:
+        return len(e.title or "") + len(e.description or "") + sum(len(f.name or "") + len(f.value or "") for f in e.fields)
+
+    embeds = [new_embed(True)]
     for cog in order:
-        # One block per command; a section longer than Discord's 1,024-character field limit
-        # continues in another field instead of being cut off.
         chunks: list[str] = []
         for cmd in sorted(by_cog.get(cog, []), key=lambda c: c.name):
+            # Command + description + usage line. Per-option detail is left out so the
+            # whole list fits Discord's 6,000-char message limit; the slash UI shows
+            # each option's description as you type anyway.
             lines = [f"{mentions.get(cmd.name, f'`/{cmd.name}`')} {cmd.description}"]
             if cmd.parameters:
                 lines.append(f"> `{_usage(cmd)}`")
-                lines += [_param_line(p) for p in cmd.parameters]
             block = "\n".join(lines)[:1024]
             if chunks and len(chunks[-1]) + 1 + len(block) <= 1024:
                 chunks[-1] += "\n" + block
             else:
                 chunks.append(block)
         for i, chunk in enumerate(chunks):
-            embed.add_field(name=titles.get(cog, cog) if i == 0 else "\u200b", value=chunk, inline=False)
-    return embed
+            name = titles.get(cog, cog) if i == 0 else "\u200b"
+            if len(embeds[-1].fields) >= 24 or length(embeds[-1]) + len(name) + len(chunk) > 5500:
+                embeds.append(new_embed(False))
+            embeds[-1].add_field(name=name, value=chunk, inline=False)
+    return embeds
 
 
 class General(commands.Cog):
@@ -94,10 +105,10 @@ class General(commands.Cog):
         """Post or refresh the standing command list in each server's Help Menu channel."""
         if not await self.bot.db.feature_targets("help"):
             return
-        embed = help_embed(self.bot.tree, await self._command_mentions(), is_admin=False)
-        embed.title = "📖 Koruxa Bot commands"
-        embed.set_footer(text="Replies are only visible to you unless you choose public. Admins: /help also lists setup commands.")
-        await update_status(self.bot, "help", embed)
+        embeds = help_embeds(self.bot.tree, await self._command_mentions(), is_admin=False)
+        embeds[0].title = "📖 Koruxa Bot commands"
+        embeds[-1].set_footer(text="Replies are only visible to you unless you choose public. Admins: /help also lists setup commands.")
+        await update_status(self.bot, "help", embeds=embeds[:10])
 
     @app_commands.command(name="help", description="List the bot's commands and their options")
     async def help(self, interaction: discord.Interaction) -> None:
@@ -105,8 +116,8 @@ class General(commands.Cog):
         # Admin-only commands are hidden from members who can't use them anyway.
         is_admin = interaction.guild is not None and interaction.permissions.manage_guild
 
-        embed = help_embed(self.bot.tree, mentions, is_admin)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embeds = help_embeds(self.bot.tree, mentions, is_admin)
+        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
 
     async def _command_mentions(self) -> dict[str, str]:
         """Clickable </name:id> mentions; needs the IDs Discord assigned at sync."""
