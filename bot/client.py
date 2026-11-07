@@ -1,5 +1,6 @@
 """The Discord client: owns shared services, loads cogs and syncs slash commands."""
 
+import datetime
 import hashlib
 import json
 import logging
@@ -31,6 +32,13 @@ EXTENSIONS = [
     "bot.cogs.rates",
     "bot.cogs.clan",
     "bot.cogs.updates",
+    "bot.cogs.potions",  # experimental; only active when DEMO_GUILD_ID is set
+    "bot.cogs.stock",    # experimental
+    "bot.cogs.loans",    # experimental
+    "bot.cogs.wiki",     # experimental
+    "bot.cogs.contributions",  # experimental
+    "bot.cogs.jobs",     # experimental
+    "bot.cogs.access",   # experimental
 ]
 
 
@@ -122,20 +130,49 @@ class KoruxaBot(commands.Bot):
         log.info("Logged in as %s (id %s) in %d server(s)", self.user, self.user.id, len(self.guilds))
         for guild in list(self.guilds):
             await self.leave_if_not_allowed(guild)
+        await self.enforce_guild_cap()
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         log.info("Added to server %s (%s)", guild.id, guild.name)
-        await self.leave_if_not_allowed(guild)
+        if await self.leave_if_not_allowed(guild):
+            return
+        await self.enforce_guild_cap(joined=guild)
 
-    async def leave_if_not_allowed(self, guild: discord.Guild) -> None:
+    async def leave_if_not_allowed(self, guild: discord.Guild) -> bool:
         """With ALLOWED_GUILDS set, this copy of the bot only serves those servers."""
         allowed = self.config.allowed_guilds
         if allowed and guild.id not in allowed:
             log.warning("Leaving server %s (%s): not in ALLOWED_GUILDS", guild.id, guild.name)
-            try:
-                await guild.leave()
-            except discord.HTTPException as e:
-                log.warning("Couldn't leave server %s: %s", guild.id, e)
+            await self._leave(guild)
+            return True
+        return False
+
+    async def enforce_guild_cap(self, joined: discord.Guild | None = None) -> None:
+        """Keep the bot in at most MAX_GUILDS servers (0 = unlimited)."""
+        cap = self.config.max_guilds
+        if not cap or len(self.guilds) <= cap:
+            return
+        if joined is not None:
+            # A fresh invite tipped us over the cap: turn the newcomer away, keep the rest.
+            log.warning("Leaving server %s (%s): already in %d server(s), the max", joined.id, joined.name, cap)
+            await self._leave(joined)
+            return
+        # Startup and already over the cap (e.g. it was lowered): keep the earliest joiners.
+        for guild in sorted(self.guilds, key=self._joined_at)[cap:]:
+            log.warning("Leaving server %s (%s): over the max of %d server(s)", guild.id, guild.name, cap)
+            await self._leave(guild)
+
+    @staticmethod
+    def _joined_at(guild: discord.Guild) -> tuple:
+        me = guild.me
+        when = me.joined_at if me and me.joined_at else datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+        return (when, guild.id)
+
+    async def _leave(self, guild: discord.Guild) -> None:
+        try:
+            await guild.leave()
+        except discord.HTTPException as e:
+            log.warning("Couldn't leave server %s: %s", guild.id, e)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         # Only the command name: modal submissions carry the user's token in their data.

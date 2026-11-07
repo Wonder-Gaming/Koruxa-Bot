@@ -13,9 +13,16 @@ SECTIONS = [
     ("General", "ℹ️ General"),
     ("Account", "👤 Your account"),
     ("Rates", "🧮 Tools"),
+    ("Wiki", "📜 Wiki"),
     ("Feed", "📈 Progress"),
     ("Clan", "🏰 Clan"),
+    ("Contributions", "🏦 Bank contributions"),
+    ("Stock", "📦 Bank stock"),
+    ("Loans", "📒 Bank loans"),
+    ("Potions", "🧪 Potion usage"),
+    ("Jobs", "📋 Clan jobs"),
     ("WorldBoss", "🌀 World Boss"),
+    ("Access", "🔐 Access control (admins)"),
     ("Setup", "🛠️ Server setup (admins)"),
 ]
 

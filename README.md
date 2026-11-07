@@ -246,6 +246,58 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 | `/link-clan` *(admin)* | Set this server's clan API token |
 | `/clear-clan` *(admin)* | Remove this server's clan API token |
 
+### 🏦 Bank contributions *(needs the clan token)*
+
+| Command | What it does |
+|---|---|
+| `/contributions` | Who funds the clan — net value each player deposited vs withdrew, valued at wiki market prices, grouped across their linked characters |
+
+### 📦 Bank stock *(needs the clan token)*
+
+| Command | What it does |
+|---|---|
+| `/stock` | Stock-target board — each tracked item's current bank amount vs its target (🔴 critical / 🟡 low / 🟢 stocked) |
+| `/stock-set <item> <target>` *(admin)* | Set a target quantity to keep stocked for a bank item |
+| `/stock-remove <item>` *(admin)* | Remove a stock target |
+
+### 📒 Bank loans *(needs the clan token)*
+
+| Command | What it does |
+|---|---|
+| `/loans` | Create/refresh a **Loan Ledger** thread tracking sealed items out on loan (auto-updates as the bank log changes; nets out alt-to-alt moves) |
+
+### 🧪 Potion usage *(needs the clan token)*
+
+| Command | What it does |
+|---|---|
+| `/potions` | Weekly potion usage — net potions each player drew from the bank (withdrawals − deposits), grouped across their linked characters |
+
+### 📜 Wiki
+
+| Command | What it does |
+|---|---|
+| `/wiki <item>` | Look up a Koruxa item: category, rarity, level, market price, stats, recipes and drop sources |
+| `/wiki-sync` *(admin)* | Crawl/refresh the local wiki cache |
+
+### 📋 Clan jobs
+
+| Command | What it does |
+|---|---|
+| `/jobs` | Show the clan jobs board |
+| `/job-add <name> [description] [emoji]` *(admin)* | Add a clan job |
+| `/job-remove <job>` *(admin)* | Remove a clan job |
+| `/job-claim <job>` / `/job-drop <job>` | Claim or leave a job |
+
+### 🔐 Access control *(admin)*
+
+Gate the admin commands above by **Discord role** and/or **in-game clan rank** (not just server admins). Scopes: `bank` (stock), `jobs`, `wiki`.
+
+| Command | What it does |
+|---|---|
+| `/access-show` | Show who can use each gated command group |
+| `/access-set <scope> [mode] [role] [rank]` | Set a scope to `managers` / `everyone` / `custom` (allow specific Discord roles and/or in-game ranks) |
+| `/access-reset <scope>` | Reset a scope to Manage-Server-only |
+
 ### 🌀 World Boss
 
 | Command | What it does |
@@ -360,5 +412,6 @@ The bundled font and emoji images in `assets/` keep their own licences (see belo
 
 ## Credits
 
+- Big thanks to **Woe** for generously sharing his own Koruxa clan bot — the bank contributions, stock targets, loan ledger, potion-usage tracking, wiki lookup, clan jobs and rank-aware access-control features were all inspired by his work (reimplemented here from scratch).
 - Game data from the Koruxa Player API. This is a fan-made bot, not affiliated with Koruxa.
 - Fonts and emoji images: see [`assets/README.md`](assets/README.md) (Inter, SIL OFL 1.1; Twemoji, CC-BY 4.0).

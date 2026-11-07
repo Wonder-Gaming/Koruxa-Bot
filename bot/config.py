@@ -23,6 +23,7 @@ class Config:
     weekly_reset_hour: int  # 0-23 (UTC)
     clan_tag: str  # for servers that haven't linked a clan token ("" = everyone)
     allowed_guilds: frozenset[int]  # servers this bot may stay in (empty = any)
+    max_guilds: int  # most servers this bot will stay in at once (0 = unlimited)
     bot_status: str  # custom status shown in the member list ("" = none)
 
 
@@ -43,6 +44,13 @@ def load_config() -> Config:
         allowed = frozenset(int(x) for x in os.environ.get("ALLOWED_GUILDS", "").replace(",", " ").split())
     except ValueError:
         raise ConfigError("ALLOWED_GUILDS must be Discord server IDs separated by commas") from None
+
+    try:
+        max_guilds = int(os.environ.get("MAX_GUILDS", "").strip() or 10)
+        if max_guilds < 0:
+            raise ValueError
+    except ValueError:
+        raise ConfigError("MAX_GUILDS must be a whole number of servers (0 = unlimited)") from None
 
     guild_raw = os.environ.get("GUILD_ID", "").strip()
     try:
@@ -78,5 +86,6 @@ def load_config() -> Config:
         clan_tag=os.environ.get("CLAN_TAG", "").strip().strip("[]"),
         highscores_demo=os.environ.get("HIGHSCORES_DEMO", "").strip().lower() in ("1", "true", "yes"),
         allowed_guilds=allowed | ({guild_id} if guild_id and allowed else set()),
+        max_guilds=max_guilds,
         bot_status=os.environ.get("BOT_STATUS", "").strip()[:128],
     )

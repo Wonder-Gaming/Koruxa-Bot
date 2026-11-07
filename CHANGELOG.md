@@ -2,6 +2,20 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.10.0] - 2026-11-08
+
+A big batch of clan-management features, inspired by **Woe**'s Koruxa clan bot, which he kindly shared — reimplemented here from scratch. Thank you, Woe!
+
+### Added
+- **Bank contributions** — `/contributions`: who funds the clan, net value deposited vs withdrawn per player, valued at live wiki market prices and grouped across each player's linked characters.
+- **Bank stock targets** — `/stock` board, plus `/stock-set` and `/stock-remove` (admin): track key bank items against target quantities (🔴 critical / 🟡 low / 🟢 stocked).
+- **Bank loan ledger** — `/loans`: a self-updating **Loan Ledger** thread tracking sealed items out on loan, reconstructed from the bank log; nets out items a player moves between their own alts.
+- **Potion usage** — `/potions`: weekly net potions each player drew from the bank (withdrawals − deposits), grouped per player so brew-and-bank and alt transfers cancel out.
+- **Wiki lookup** — `/wiki <item>`: stats, market price, recipes and drop sources from a local cache of the Koruxa wiki, with `/wiki-sync` (admin) to crawl/refresh. The crawler identifies itself honestly and respects `robots.txt`.
+- **Clan jobs** — `/jobs` board with `/job-add` / `/job-remove` (admin) and `/job-claim` / `/job-drop`.
+- **Access control** — `/access-show`, `/access-set`, `/access-reset` (admin): gate the admin commands by **Discord role and/or in-game clan rank**, not just server admins.
+- **`MAX_GUILDS`** setting to cap how many servers the bot stays in at once.
+
 ## [1.9.0] - 2026-11-04
 
 ### Changed
