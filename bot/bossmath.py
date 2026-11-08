@@ -4,12 +4,14 @@
 - Max hit = (5 + Damage) x 1.28^Power. Verified: it matches the API's boss_max_hit exactly for every linked
   player (Oct 2026). The wiki's update notes confirm x1.28 per Power level (the community calculator still
   used the old x1.24) and the Power cost steps.
-- Each hit rolls between the minimum (Precision % of the max hit) and the max hit, one hit per second for
-  30 + Time seconds.
-- Crit: Crit % chance (max 25, per the wiki), crits deal x(1.5 + 0.15 x Devastation). The +0.15 per level
-  is confirmed in game (Devastation 20 shows x3); the x1.5 base is the community calculator's.
-- Rage: builds up during a fight to a cap of 5 per Rage level, +1% damage per point (confirmed in game: Rage
-  15 shows +75); counted at 75% of the cap on average (the game's own old estimate for Expert Tier decks).
+- Non-crit hits roll between the minimum (Precision % of the max hit) and the max hit, one hit per second
+  for 30 + Time seconds.
+- Crit: Crit % chance (max 25) of a crit, which deals x(0.25 + 0.15 x Devastation) of the max hit and
+  IGNORES the Precision floor. The +0.15 per level is confirmed in game (Devastation 20 shows x3); the small
+  base and crit-bypasses-floor behaviour are calibrated to two live clan-boss panels (Nov 2026): a maxed
+  25/20/15 deck matched avg hit to within 0.1% at both Precision 26 and 31.
+- Rage: builds up to a cap of 5 per Rage level, +1% damage per point (confirmed in game: Rage 15 shows +75);
+  it effectively sits at that cap over a fight (calibrated; was previously estimated at 75%).
 - Scroll cost of level n: Damage 5n and Precision 25n (confirmed in game), Time 8n, Crit 8n, Devastation 12n,
   Rage 12n (community calculator), Power 12n with x3 from 51, x8 from 71, x20 from 91 (wiki).
 - Caps (confirmed in game, Nov 2026): Precision 40, Rage 15, Devastation 20, Crit 25, Time 30; Damage and
@@ -29,7 +31,8 @@ EMOJI = {"damage": "⚔️", "power": "💪", "precision": "🎯", "time": "⏱�
          "rage": "🔥"}
 CAPS = {"precision": 40, "time": 30, "crit": 25, "devastation": 20, "rage": 15}
 COST_PER_LEVEL = {"damage": 5, "time": 8, "crit": 8, "devastation": 12, "rage": 12, "precision": 25, "power": 12}
-RAGE_AVERAGE = 0.75  # share of the rage cap reached on average over a fight
+CRIT_BASE = 0.25     # crit damage = (CRIT_BASE + 0.15 x Devastation) x the max hit
+RAGE_AVERAGE = 1.0   # rage effectively sits at its cap over a fight
 
 
 @dataclass(frozen=True)
@@ -52,10 +55,12 @@ class Upgrades:
 
     def per_attempt(self, bonus: float = 0.0) -> float:
         """Expected damage of one attempt. `bonus`: other % damage bonuses as a fraction (e.g. research)."""
-        avg_roll = (1 + min(self.precision, 100) / 100) / 2
-        crit = 1 + min(self.crit, 100) / 100 * (1.5 + 0.15 * self.devastation - 1)
+        c = min(self.crit, 100) / 100
+        roll_avg = (1 + min(self.precision, 100) / 100) / 2   # non-crit hits roll from Precision% to 100%
+        crit_mult = CRIT_BASE + 0.15 * self.devastation       # a crit deals this x the max hit
+        per_hit = (1 - c) * roll_avg + c * crit_mult           # crits ignore the Precision floor
         rage = 1 + RAGE_AVERAGE * 0.05 * self.rage
-        return self.max_hit() * avg_roll * crit * rage * (1 + bonus) * (30 + self.time)
+        return self.max_hit() * per_hit * rage * (1 + bonus) * (30 + self.time)
 
     def cost(self, upgrade: str) -> int | None:
         """Scrolls for the next level of `upgrade` (None when it's maxed)."""

@@ -2,6 +2,14 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.11.0] - 2026-11-08
+
+### Added
+- **Guides** — `/setchannel guides #channel` then `/guides` (admin): publishes gear & augment guides, each in its own thread (edited in place, refreshed daily, built from the cached wiki). First set: Best-in-Slot per style and level, per-slot upgrade paths, and combat augments.
+
+### Fixed
+- **`/bossupgrades` expected damage** was ~18% low. Recalibrated against live clan-boss panels: crits hit near max and bypass the Precision floor (so Precision was over-valued), and Rage sits at its cap over a fight (was assumed 75%). Expected damage per attempt now matches the in-game figure to within ~0.1%.
+
 ## [1.10.0] - 2026-11-08
 
 A big batch of clan-management features, inspired by **Woe**'s Koruxa clan bot, which he kindly shared — reimplemented here from scratch. Thank you, Woe!

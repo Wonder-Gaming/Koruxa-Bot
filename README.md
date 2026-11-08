@@ -279,6 +279,14 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 | `/wiki <item>` | Look up a Koruxa item: category, rarity, level, market price, stats, recipes and drop sources |
 | `/wiki-sync` *(admin)* | Crawl/refresh the local wiki cache |
 
+### 📚 Guides
+
+Set a channel with `/setchannel guides #channel`, then publish. Each guide gets its own thread (so there's room for lots of detail), edited in place and refreshed daily — all from the cached wiki data, no player setup.
+
+| Command | What it does |
+|---|---|
+| `/guides` *(admin)* | Publish/refresh the guide threads: Best-in-Slot (Melee/Ranged/Magic) per level, per-slot upgrade paths, and combat augments |
+
 ### 📋 Clan jobs
 
 | Command | What it does |

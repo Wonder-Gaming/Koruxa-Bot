@@ -128,6 +128,34 @@ def _apply_grid(item: dict[str, Any], header: list[str], data: list[list[str]]) 
     # from the infobox "Stats" field.
 
 
+AUGMENTS_URL = "https://koruxa.com/wiki/augments.html"
+_AUG_BOLD = re.compile(r"<b>(.*?)</b>", re.I | re.S)
+_AUG_EXTRA = re.compile(r'<div class="extra">(.*?)</div>', re.I | re.S)
+
+
+def parse_augments_html(page: str) -> list[dict[str, Any]]:
+    """Parse the wiki augments table: name (bold), style, and per-level values."""
+    out: list[dict[str, Any]] = []
+    for table_html in _TABLE.findall(page):
+        for row in _ROW.findall(table_html):
+            cells = _CELL.findall(row)
+            if len(cells) < 3:
+                continue
+            name_cell = cells[0][1]
+            bold = _AUG_BOLD.search(name_cell)
+            if not bold:
+                continue
+            style = _clean(cells[1][1]).lower()
+            if style not in ("melee", "ranged", "magic"):
+                continue
+            emoji = _clean(name_cell.split("<b>")[0])
+            extra = _AUG_EXTRA.search(name_cell)
+            values = [v for v in (_int(c[1]) for c in cells[2:]) if v is not None]
+            out.append({"emoji": emoji, "name": _clean(bold.group(1)), "style": style,
+                        "values": values, "desc": _clean(extra.group(1)) if extra else ""})
+    return out
+
+
 class WikiCache:
     """Stores parsed items in a wiki_items table (uses the bot's sqlite connection)."""
 
@@ -212,6 +240,23 @@ class WikiCache:
             log.warning("wiki on-demand fetch failed for %s: %s", key, e)
             return None
 
+    async def sync_augments(self) -> int:
+        """Fetch + store the wiki augments table in bot_state 'wiki_augments'."""
+        session = await self._ensure_session()
+        try:
+            async with session.get(AUGMENTS_URL, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status != 200:
+                    return 0
+                augments = parse_augments_html(await resp.text())
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.warning("wiki augments fetch failed: %s", e)
+            return 0
+        await self.db.set_state("wiki_augments", {"augments": augments, "fetched_at": time.time()})
+        return len(augments)
+
+    async def augments(self) -> list[dict[str, Any]]:
+        return (await self.db.get_state("wiki_augments") or {}).get("augments", [])
+
     async def sync(self, *, force: bool = False) -> dict[str, int]:
         """Full crawl of every sitemap item (honest UA, polite delay, conditional GET)."""
         if self.syncing:
@@ -253,6 +298,7 @@ class WikiCache:
                     await self.db.conn.commit()
                 await asyncio.sleep(REQUEST_DELAY)
             await self.db.conn.commit()
+            await self.sync_augments()
         finally:
             self.syncing = False
             self.status["finished_at"] = time.time()

@@ -28,6 +28,8 @@ FEATURES: dict[str, Feature] = {
                 live=True, clan=True),
         Feature("updates", "Bot Updates", "📰", "Patch notes when the bot updates, removed after 12 hours (default: the Help Menu channel)",
                 live=True),
+        Feature("guides", "Guides", "📚", "Gear best-in-slot, upgrade paths and combat augments, one thread each",
+                live=True),
         Feature("enchant", "Enchant Queue", "✨", "Enchant queue updates", live=False),
     ]
 }
