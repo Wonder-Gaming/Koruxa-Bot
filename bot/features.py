@@ -13,6 +13,7 @@ class Feature:
     description: str
     live: bool  # False = waiting on data the bot can't read yet
     clan: bool = False  # needs the clan token (/link-clan)
+    board: bool = False  # can also target a Forum channel (one post per guide/item)
 
 
 FEATURES: dict[str, Feature] = {
@@ -29,7 +30,9 @@ FEATURES: dict[str, Feature] = {
         Feature("updates", "Bot Updates", "📰", "Patch notes when the bot updates, removed after 12 hours (default: the Help Menu channel)",
                 live=True),
         Feature("guides", "Guides", "📚", "Gear best-in-slot, upgrade paths and combat augments, one thread each",
-                live=True),
+                live=True, board=True),
+        Feature("stock", "Bank Stock", "📦", "A live board of your clan bank stock targets (one post per item in a forum)",
+                live=True, clan=True, board=True),
         Feature("enchant", "Enchant Queue", "✨", "Enchant queue updates", live=False),
     ]
 }

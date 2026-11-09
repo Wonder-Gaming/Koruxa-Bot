@@ -260,6 +260,8 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 | `/stock-set <item> <target>` *(admin)* | Set a target quantity to keep stocked for a bank item |
 | `/stock-remove <item>` *(admin)* | Remove a stock target |
 
+For a **live board**, `/setchannel stock #channel`. In a Forum channel you get one self-updating post per item (title shows the live count/percent/status, plus recent donors and takers); in a text channel, one combined board. Refreshes every ~10 minutes and whenever a target changes.
+
 ### 📒 Bank loans *(needs the clan token)*
 
 | Command | What it does |
@@ -281,20 +283,20 @@ Linked characters in the clan appear on the highscores at the next refresh (ever
 
 ### 📚 Guides
 
-Set a channel with `/setchannel guides #channel`, then publish. Each guide gets its own thread (so there's room for lots of detail), edited in place and refreshed daily — all from the cached wiki data, no player setup.
+Set a channel with `/setchannel guides #channel` (a **text or Forum channel**), then publish. Each guide gets its own thread/post — in a Forum, one post per guide — edited in place and refreshed daily, all from the cached wiki data, no player setup.
 
 | Command | What it does |
 |---|---|
-| `/guides` *(admin)* | Publish/refresh the guide threads: Best-in-Slot (Melee/Ranged/Magic) per level, per-slot upgrade paths, and combat augments |
+| `/guides` *(admin)* | Publish/refresh the guides: Best-in-Slot (Melee/Ranged/Magic) per level, per-slot upgrade paths, and combat augments |
 
-### 📋 Clan jobs
+### 🎯 Skill focus
+
+Members set the skills they focus on (optionally per linked character); the board shows who covers each skill — grouped Gathering / Artisan / Combat (Slayer is under Combat).
 
 | Command | What it does |
 |---|---|
-| `/jobs` | Show the clan jobs board |
-| `/job-add <name> [description] [emoji]` *(admin)* | Add a clan job |
-| `/job-remove <job>` *(admin)* | Remove a clan job |
-| `/job-claim <job>` / `/job-drop <job>` | Claim or leave a job |
+| `/focus [skill] [character]` | Show the board, or toggle a skill you focus on (optionally for one of your characters) |
+| `/focus-set <member> <skill> [character] [remove]` *(admin)* | Assign or unassign a member's focus skill |
 
 ### 🔐 Access control *(admin)*
 

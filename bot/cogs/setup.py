@@ -108,11 +108,16 @@ class Setup(commands.Cog):
         self,
         interaction: discord.Interaction,
         feature: app_commands.Choice[str],
-        channel: discord.TextChannel | None = None,
+        channel: discord.TextChannel | discord.ForumChannel | None = None,
     ) -> None:
         guild = interaction.guild
         assert guild is not None
         info = FEATURES[feature.value]
+        if isinstance(channel, discord.ForumChannel) and not info.board:
+            await interaction.response.send_message(
+                f"**{info.label}** needs a normal text channel — Forum channels are only for board features "
+                "like Guides and Bank Stock.", ephemeral=True)
+            return
         current = await self.bot.db.get_feature(guild.id, info.key)
         await self.bot.db.set_feature_field(guild.id, info.key, "channel_id", channel.id if channel else None)
         if channel is None or current is None or current.channel_id != channel.id:
@@ -136,6 +141,10 @@ class Setup(commands.Cog):
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
         if info.key == "help" and (general := self.bot.get_cog("General")):
             await general.publish_help()  # type: ignore[attr-defined]
+        elif info.key == "stock" and (stock := self.bot.get_cog("Stock")):
+            self.bot.loop.create_task(stock._refresh_board(guild.id))  # type: ignore[attr-defined]
+        elif info.key == "guides" and (guides := self.bot.get_cog("Guides")):
+            self.bot.loop.create_task(guides._publish(guild.id, channel))  # type: ignore[attr-defined]
 
     @app_commands.command(name="rolepanel", description="Post the buttons members use to pick their alert roles (admin)")
     @app_commands.describe(channel="Where to post the panel (default: this channel)")

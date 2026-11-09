@@ -11,7 +11,7 @@ import logging
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from .. import access
 from ..stock import _norm, build_rows_from_targets, demo_rows, resolve_item
@@ -20,10 +20,64 @@ log = logging.getLogger(__name__)
 
 BANK_LIMIT = 2000  # share the cached clan-bank response with potions/loans
 STATE_KEY = "stock_targets"
+BOARD_KEY = "stock_board"  # {guild: {channel_id, message_id?, posts: {target_key: {thread_id, message_id}}}}
 
 
 def _n(value: int) -> str:
     return f"{int(value):,}"
+
+
+def _status_colour(emoji: str) -> discord.Colour:
+    return {"🔴": discord.Colour.red(), "🟡": discord.Colour.gold()}.get(emoji, discord.Colour.green())
+
+
+def stock_title(r) -> str:
+    emoji, label = r.status
+    capped = min(100.0, max(0.0, r.percent))
+    return f"{emoji} {r.name} — {_n(r.current)}/{_n(r.target)} ({capped:.0f}%) · {label}"[:100]
+
+
+def item_movements(log: list[dict], item_key: str, name: str, limit: int = 10):
+    """Recent donors (deposits) and takers (withdrawals/gifts) of one item, newest first."""
+    key, nm = _norm(item_key), _norm(name)
+    donors, takers = [], []
+    for e in sorted(log or [], key=lambda x: (str(x.get("at") or ""), x.get("id") or 0), reverse=True):
+        ek, en = _norm(e.get("item_key")), _norm(e.get("name"))
+        if not ((key and ek == key) or (not key and nm and en == nm)):
+            continue
+        who = discord.utils.escape_markdown(str(e.get("character") or "?"))
+        try:
+            qty = int(e.get("quantity") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        action = str(e.get("action", "")).lower()
+        if action == "deposit" and len(donors) < limit:
+            donors.append(f"{who} · {_n(qty)}")
+        elif action in ("withdraw", "give") and len(takers) < limit:
+            takers.append(f"{who} · {_n(qty)}")
+        if len(donors) >= limit and len(takers) >= limit:
+            break
+    return donors, takers
+
+
+def item_embed(r, clan_name: str, donors=None, takers=None) -> discord.Embed:
+    """A single item's live status + recent movers, for one forum post."""
+    emoji, label = r.status
+    capped = min(100.0, max(0.0, r.percent))
+    lines = [f"**{_n(r.current)} / {_n(r.target)}** ({capped:.0f}%) — {label}"]
+    if r.needed > 0:
+        lines.append(f"Need **{_n(r.needed)} more**")
+    elif r.over > 0:
+        lines.append(f"✅ **{_n(r.over)} over** target")
+    else:
+        lines.append("✅ Target met")
+    embed = discord.Embed(title=f"{emoji} {r.name}", description="\n".join(lines), colour=_status_colour(emoji))
+    if donors:
+        embed.add_field(name="📥 Recent donors", value="\n".join(donors)[:1024], inline=True)
+    if takers:
+        embed.add_field(name="📤 Recent takers", value="\n".join(takers)[:1024], inline=True)
+    embed.set_footer(text=f"{clan_name} · updates ~every 10 min")
+    return embed
 
 
 def _row_field(r) -> dict:
@@ -54,6 +108,101 @@ def build_stock_embed(rows, clan_name: str, is_demo: bool = False) -> discord.Em
 class Stock(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def cog_load(self) -> None:
+        self.refresh.start()
+
+    async def cog_unload(self) -> None:
+        self.refresh.cancel()
+
+    # ---- persistent board ----
+    async def _stock_channel(self, guild_id: int | None):
+        cfg = await self.bot.db.get_feature(guild_id, "stock")
+        chan = self.bot.get_channel(cfg.channel_id) if cfg and cfg.channel_id else None
+        return chan if isinstance(chan, (discord.TextChannel, discord.ForumChannel)) else None
+
+    async def _fetch(self, cid: int):
+        chan = self.bot.get_channel(cid)
+        if chan is not None:
+            return chan
+        try:
+            return await self.bot.fetch_channel(cid)
+        except discord.HTTPException:
+            return None
+
+    async def _publish_board(self, guild_id: int, channel) -> None:
+        targets = await self._targets(guild_id)
+        data = await self._bank_data(guild_id)
+        rows = build_rows_from_targets(targets, data.get("items") or [])
+        log = data.get("log") or []
+        key_of = {_norm(t.get("name")): str(t.get("item_key") or "") for t in targets}
+        clan = self.bot.clan_tag(guild_id) or "Your clan"  # type: ignore[attr-defined]
+        state = await self.bot.db.get_state(BOARD_KEY) or {}
+        gstate = state.setdefault(str(guild_id), {})
+        gstate["channel_id"] = channel.id
+
+        if isinstance(channel, discord.ForumChannel):
+            posts = gstate.setdefault("posts", {})
+            seen = set()
+            for r in rows:
+                tkey = _norm(r.name)
+                seen.add(tkey)
+                title = stock_title(r)
+                donors, takers = item_movements(log, key_of.get(tkey, ""), r.name)
+                embed = item_embed(r, clan, donors, takers)
+                info = posts.get(tkey)
+                thread = await self._fetch(info["thread_id"]) if info else None
+                if isinstance(thread, discord.Thread):
+                    if thread.archived:
+                        await thread.edit(archived=False)
+                    try:
+                        msg = await thread.fetch_message(info["message_id"])
+                        await msg.edit(embed=embed)
+                        if thread.name != title:
+                            await thread.edit(name=title)
+                        continue
+                    except discord.HTTPException:
+                        pass
+                created = await channel.create_thread(name=title, embed=embed)
+                posts[tkey] = {"thread_id": created.thread.id, "message_id": created.message.id}
+            for tkey in [k for k in posts if k not in seen]:  # targets that were removed
+                info = posts.pop(tkey)
+                thread = await self._fetch(info["thread_id"])
+                if isinstance(thread, discord.Thread):
+                    try:
+                        await thread.delete()
+                    except discord.HTTPException:
+                        pass
+        else:
+            embed = build_stock_embed(rows, clan)
+            mid = gstate.get("message_id")
+            if mid:
+                try:
+                    await (await channel.fetch_message(mid)).edit(embed=embed)
+                    await self.bot.db.set_state(BOARD_KEY, state)
+                    return
+                except discord.HTTPException:
+                    pass
+            gstate["message_id"] = (await channel.send(embed=embed)).id
+        await self.bot.db.set_state(BOARD_KEY, state)
+
+    async def _refresh_board(self, guild_id: int) -> None:
+        channel = await self._stock_channel(guild_id)
+        if channel is not None:
+            try:
+                await self._publish_board(guild_id, channel)
+            except discord.HTTPException as e:
+                log.warning("stock board refresh failed for guild %s: %s", guild_id, e)
+
+    @tasks.loop(minutes=10)
+    async def refresh(self) -> None:
+        state = await self.bot.db.get_state(BOARD_KEY) or {}
+        for gid in list(state):
+            await self._refresh_board(int(gid))
+
+    @refresh.before_loop
+    async def _before(self) -> None:
+        await self.bot.wait_until_ready()
 
     def _tracker(self, guild_id: int | None):
         cog = self.bot.get_cog("Clan")
@@ -144,6 +293,7 @@ class Stock(commands.Cog):
                            or (not item_key and _norm(t.get("name")) == _norm(name)))]
         targets.append({"item_key": item_key, "name": name, "target": int(target)})
         await self._save_targets(interaction.guild_id, targets)
+        await self._refresh_board(interaction.guild_id)
         await interaction.followup.send(f"📦 Target set: **{name}** → keep **{_n(target)}** stocked.", ephemeral=True)
 
     @app_commands.command(name="stock-remove", description="Remove a clan bank stock target (admins)")
@@ -161,6 +311,7 @@ class Stock(commands.Cog):
             await interaction.followup.send(f"No stock target matching **{item}**.", ephemeral=True)
             return
         await self._save_targets(interaction.guild_id, kept)
+        await self._refresh_board(interaction.guild_id)
         await interaction.followup.send(f"Removed stock target **{item}**.", ephemeral=True)
 
 

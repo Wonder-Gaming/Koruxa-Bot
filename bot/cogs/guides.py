@@ -52,47 +52,62 @@ class Guides(commands.Cog):
     async def _guides_channel(self, guild_id: int | None):
         cfg = await self.bot.db.get_feature(guild_id, "guides")
         chan = self.bot.get_channel(cfg.channel_id) if cfg and cfg.channel_id else None
-        return chan if isinstance(chan, discord.TextChannel) else None
+        return chan if isinstance(chan, (discord.TextChannel, discord.ForumChannel)) else None
 
-    async def _publish(self, guild_id: int, channel: discord.TextChannel) -> int:
+    async def _publish(self, guild_id: int, channel) -> int:
         guides = await self._build()
         state = await self.bot.db.get_state(STATE_KEY) or {}
         gstate = state.setdefault(str(guild_id), {})
         gstate["channel_id"] = channel.id
         threads = gstate.setdefault("threads", {})
+        is_forum = isinstance(channel, discord.ForumChannel)
 
         for guide in guides:
             info = threads.get(guide["key"]) or {}
+            embeds = [discord.Embed(title=m["title"], description=m["description"], colour=COLOUR)
+                      for m in guide["messages"]]
+            name = f"{guide['emoji']} {guide['title']}"[:100]
             thread = None
             if info.get("thread_id"):
                 thread = await self._fetch_channel(info["thread_id"])
                 if isinstance(thread, discord.Thread) and thread.archived:
                     await thread.edit(archived=False)
-            if not isinstance(thread, discord.Thread):
-                thread = await channel.create_thread(
-                    name=f"{guide['emoji']} {guide['title']}"[:100], type=discord.ChannelType.public_thread)
-                info = {"thread_id": thread.id, "message_ids": []}
-            old_ids = info.get("message_ids", [])
-            new_ids = []
-            for i, msg in enumerate(guide["messages"]):
-                embed = discord.Embed(title=msg["title"], description=msg["description"], colour=COLOUR)
-                if i < len(old_ids):
+                if not isinstance(thread, discord.Thread):
+                    thread = None
+
+            new_ids: list[int] = []
+            if thread is None:
+                # In a forum each guide is a post (its first message is the starter);
+                # in a text channel it's a public thread we then fill.
+                if is_forum:
+                    created = await channel.create_thread(name=name, embed=embeds[0])
+                    thread = created.thread
+                    new_ids.append(created.message.id)
+                    rest = embeds[1:]
+                else:
+                    thread = await channel.create_thread(name=name, type=discord.ChannelType.public_thread)
+                    rest = embeds
+                for embed in rest:
+                    new_ids.append((await thread.send(embed=embed)).id)
+            else:
+                old_ids = info.get("message_ids", [])
+                for i, embed in enumerate(embeds):
+                    if i < len(old_ids):
+                        try:
+                            m = await thread.fetch_message(old_ids[i])
+                            await m.edit(embed=embed)
+                            new_ids.append(m.id)
+                            continue
+                        except discord.HTTPException:
+                            pass
+                    new_ids.append((await thread.send(embed=embed)).id)
+                for stale in old_ids[len(embeds):]:
                     try:
-                        m = await thread.fetch_message(old_ids[i])
-                        await m.edit(embed=embed)
-                        new_ids.append(m.id)
-                        continue
+                        await (await thread.fetch_message(stale)).delete()
                     except discord.HTTPException:
                         pass
-                sent = await thread.send(embed=embed)
-                new_ids.append(sent.id)
-            for stale in old_ids[len(guide["messages"]):]:
-                try:
-                    await (await thread.fetch_message(stale)).delete()
-                except discord.HTTPException:
-                    pass
-            info["message_ids"] = new_ids
-            threads[guide["key"]] = info
+
+            threads[guide["key"]] = {"thread_id": thread.id, "message_ids": new_ids}
 
         await self.bot.db.set_state(STATE_KEY, state)
         return len(guides)

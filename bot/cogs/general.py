@@ -20,7 +20,7 @@ SECTIONS = [
     ("Stock", "📦 Bank stock"),
     ("Loans", "📒 Bank loans"),
     ("Potions", "🧪 Potion usage"),
-    ("Jobs", "📋 Clan jobs"),
+    ("SkillFocus", "🎯 Skill focus"),
     ("WorldBoss", "🌀 World Boss"),
     ("Access", "🔐 Access control (admins)"),
     ("Setup", "🛠️ Server setup (admins)"),

@@ -22,7 +22,7 @@ DEFAULT_MODE = "managers"
 
 SCOPES: dict[str, str] = {
     "bank": "Bank stock targets — /stock-set, /stock-remove",
-    "jobs": "Clan jobs — /job-add, /job-remove",
+    "focus": "Skill focus — /focus-set",
     "wiki": "Wiki cache — /wiki-sync",
     "guides": "Guides — /guides publish",
 }

@@ -37,7 +37,7 @@ EXTENSIONS = [
     "bot.cogs.loans",    # experimental
     "bot.cogs.wiki",     # experimental
     "bot.cogs.contributions",  # experimental
-    "bot.cogs.jobs",
+    "bot.cogs.skillfocus",
     "bot.cogs.access",
     "bot.cogs.guides",
 ]

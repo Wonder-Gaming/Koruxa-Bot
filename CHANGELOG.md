@@ -2,6 +2,17 @@
 
 All notable changes to the Koruxa Discord Bot. Dates are UTC.
 
+## [1.12.0] - 2026-11-09
+
+### Added
+- **Skill focus** — `/focus` and `/focus-set` (replaces the old clan-jobs board): members set the skills they focus on, optionally per linked character, and the board shows who covers each skill (grouped Gathering / Artisan / Combat).
+- **Forum channels for Guides** — `/setchannel guides` now accepts a Forum channel, where each guide becomes its own post.
+- **Live Bank Stock board** — `/setchannel stock #channel`. In a Forum you get one self-updating post per item (title shows live count/percent/status, with recent donors and takers listed inside); in a text channel, one combined board. Refreshes every ~10 minutes and on any target change.
+
+### Changed
+- `/setchannel` now accepts Forum channels for board features (Guides, Bank Stock).
+- The clan-jobs feature (`/jobs`, `/job-*`) was replaced by the skill-focus board.
+
 ## [1.11.0] - 2026-11-08
 
 ### Added
